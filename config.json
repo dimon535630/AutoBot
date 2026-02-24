@@ -1,0 +1,16 @@
+{
+  "hotkeys": {
+    "start": "+",
+    "stop": "-",
+    "press_esc": "0",
+    "exit": "ctrl+shift+q"
+  },
+  "sound": {
+    "enabled": true,
+    "file": "ASK.mp3"
+  },
+  "behavior": {
+    "reward_action": "take",
+    "post_cycle_reset": false
+  }
+}
