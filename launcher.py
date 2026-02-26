@@ -72,20 +72,80 @@ class LicensePanel(ttk.LabelFrame):
         self.refresh_status()
 
 
+class LicenseActivationWindow(tk.Tk):
+    def __init__(self, license_manager: LicenseManager):
+        super().__init__()
+        self.title("Активация лицензии")
+        self.geometry("560x280")
+        self.minsize(520, 260)
+
+        self.license_manager = license_manager
+        self.activated = False
+
+        self._configure_styles()
+        self._build_ui()
+        self.protocol("WM_DELETE_WINDOW", self.on_close)
+
+    def _configure_styles(self):
+        style = ttk.Style(self)
+        if "clam" in style.theme_names():
+            style.theme_use("clam")
+
+        bg_main = "#0f131c"
+        bg_card = "#171e2a"
+        fg_primary = "#e7edf9"
+        fg_secondary = "#a8b3c6"
+
+        self.configure(bg=bg_main)
+
+        style.configure("Main.TFrame", background=bg_main)
+        style.configure("Card.TFrame", background=bg_card)
+        style.configure("Header.TLabel", background=bg_main, foreground=fg_primary, font=("Segoe UI", 16, "bold"))
+        style.configure("SubHeader.TLabel", background=bg_main, foreground=fg_secondary, font=("Segoe UI", 10))
+        style.configure("Card.TLabel", background=bg_card, foreground=fg_primary)
+        style.configure("Hint.TLabel", background=bg_card, foreground=fg_secondary)
+        style.configure("Card.TLabelframe", background=bg_card, foreground=fg_primary)
+        style.configure("Card.TLabelframe.Label", background=bg_card, foreground=fg_primary)
+        style.configure("Accent.TButton", background="#4f8cff", foreground="white", padding=8)
+        style.map("Accent.TButton", background=[("active", "#6ba0ff")])
+
+    def _build_ui(self):
+        root = ttk.Frame(self, padding=14, style="Main.TFrame")
+        root.pack(fill="both", expand=True)
+
+        ttk.Label(root, text="FishingBot", style="Header.TLabel").pack(anchor="w")
+        ttk.Label(root, text="Перед началом работы активируйте ключ", style="SubHeader.TLabel").pack(
+            anchor="w", pady=(2, 10)
+        )
+
+        self.license_panel = LicensePanel(root, self.license_manager, self.on_license_change)
+        self.license_panel.pack(fill="both", expand=True)
+        self.license_panel.refresh_status()
+
+    def on_license_change(self, active: bool):
+        if active:
+            self.activated = True
+            messagebox.showinfo("ОК", "Лицензия активирована. Открываем основное окно.")
+            self.destroy()
+
+    def on_close(self):
+        self.activated = False
+        self.destroy()
+
+
 class Launcher(tk.Tk):
     CYCLE_RESET_LIMIT = 6
 
-    def __init__(self):
+    def __init__(self, license_manager: LicenseManager):
         super().__init__()
         self.title("FishingBot")
-        self.geometry("560x470")
-        self.minsize(540, 450)
+        self.geometry("560x360")
+        self.minsize(540, 340)
 
         self._hotkey_ids = []
         self.ctl = main.BotController()
-        self.license_manager = LicenseManager()
+        self.license_manager = license_manager
         self.cfg = {}
-        self.license_panel = None
 
         self.status_var = tk.StringVar(value="STOPPED")
         self.reset_enabled_var = tk.BooleanVar(value=True)
@@ -96,7 +156,6 @@ class Launcher(tk.Tk):
 
         self.reload_config()
         self.sync_reset_options()
-        self.license_panel.refresh_status()
 
         self.after(200, self.poll_status)
         self.after(1000, self.poll_license)
@@ -147,12 +206,12 @@ class Launcher(tk.Tk):
         control_card = ttk.Frame(root, style="Card.TFrame", padding=12)
         control_card.pack(fill="x", pady=(12, 8))
 
-        buttons = ttk.Frame(control_card, style="Card.TFrame")
-        buttons.pack(fill="x")
-        ttk.Button(buttons, text="START", command=self.on_start, style="Accent.TButton").pack(
+        controls_row = ttk.Frame(control_card, style="Card.TFrame")
+        controls_row.pack(fill="x")
+        ttk.Button(controls_row, text="START", command=self.on_start, style="Accent.TButton").pack(
             side="left", fill="x", expand=True, padx=(0, 5)
         )
-        ttk.Button(buttons, text="STOP", command=self.on_stop).pack(side="left", fill="x", expand=True, padx=(5, 0))
+        ttk.Button(controls_row, text="STOP", command=self.on_stop).pack(side="left", fill="x", expand=True, padx=(5, 0))
 
         modes = ttk.Frame(control_card, style="Card.TFrame")
         modes.pack(fill="x", pady=(10, 0))
@@ -173,9 +232,6 @@ class Launcher(tk.Tk):
         ).pack(anchor="w")
 
         ttk.Button(root, text="Reload config.json", command=self.on_reload).pack(fill="x", pady=(0, 10))
-
-        self.license_panel = LicensePanel(root, self.license_manager, self.on_license_change)
-        self.license_panel.pack(fill="both", expand=True)
 
     def apply_config_to_bot(self, cfg: dict):
         sound = cfg.get("sound", {})
@@ -225,29 +281,6 @@ class Launcher(tk.Tk):
         self.ctl.bot.set_post_cycle_reset(self.reset_enabled_var.get())
         self.ctl.bot.set_cycle_limit(self.CYCLE_RESET_LIMIT)
 
-    def on_license_change(self, active: bool):
-        state = "normal" if active else "disabled"
-        panel = getattr(self, "license_panel", None)
-        container = getattr(self, "content_root", None)
-
-        if container is not None:
-            for child in container.winfo_children():
-                if panel is not None and child is panel:
-                    continue
-                self._set_state_recursive(child, state)
-
-        if not active:
-            self.on_stop()
-
-    def _set_state_recursive(self, widget, state):
-        try:
-            if isinstance(widget, (ttk.Button, ttk.Checkbutton)):
-                widget.configure(state=state)
-        except tk.TclError:
-            pass
-        for c in widget.winfo_children():
-            self._set_state_recursive(c, state)
-
     def on_start(self):
         if not self.license_manager.get_status().is_active:
             messagebox.showwarning("Лицензия", "Сначала активируйте ключ доступа")
@@ -266,7 +299,11 @@ class Launcher(tk.Tk):
         self.after(200, self.poll_status)
 
     def poll_license(self):
-        self.license_panel.refresh_status()
+        if not self.license_manager.get_status().is_active:
+            self.on_stop()
+            messagebox.showwarning("Лицензия", "Лицензия неактивна. Приложение будет закрыто.")
+            self.on_close()
+            return
         self.after(1000, self.poll_license)
 
     def on_close(self):
@@ -278,5 +315,14 @@ class Launcher(tk.Tk):
 
 
 if __name__ == "__main__":
-    app = Launcher()
+    manager = LicenseManager()
+    status = manager.get_status()
+
+    if not status.is_active:
+        activation = LicenseActivationWindow(manager)
+        activation.mainloop()
+        if not activation.activated:
+            raise SystemExit
+
+    app = Launcher(manager)
     app.mainloop()
