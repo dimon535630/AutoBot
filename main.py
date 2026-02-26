@@ -244,6 +244,13 @@ class FishingBot:
     def start_fishing(self):
         """Основной цикл рыбалки."""
         while self.bot_running:
+
+            self.completed_cycles += 1
+            print(f"Цикл завершён: {self.completed_cycles}/{self.cycle_limit}")
+            if self.post_cycle_reset_enabled and self.completed_cycles >= self.cycle_limit:
+                self.perform_cycle_reset_sequence()
+                self.completed_cycles = 0
+
             print("Ожидание перед первой мини-игрой...")
             time.sleep(5)
 
@@ -253,21 +260,23 @@ class FishingBot:
             print("Запуск второй мини-игры...")
             self.second_mini_game()
 
+
             print("Запуск третьей мини-игры...")
-            self.track_image_movement()
+            track_result = self.track_image_movement()
+            action_pressed_after_ad_disappear = False
+            if track_result == 'ad_disappeared' and self.bot_running:
+                action_name = "'Забрать себе'" if self.action_mode == 'take' else "'Отпустить'"
+                print(f"AD.png пропало в ROI -> пробуем нажать {action_name}...")
+                ok = self.press_action_button()
+                if not ok and self.bot_running:
+                    print("Не удалось нажать кнопку действия после пропажи AD.png -> возврат к первой мини-игре")
+                    continue
+                action_pressed_after_ad_disappear = True
 
-            action_name = "'Забрать себе'" if self.action_mode == 'take' else "'Отпустить'"
-            print(f"Запуск функции {action_name}...")
-            ok = self.press_action_button()
-            if not ok and self.bot_running:
-                print("Не получилось нажать кнопку -> перезапуск цикла")
-                continue
-
-            self.completed_cycles += 1
-            print(f"Цикл завершён: {self.completed_cycles}/{self.cycle_limit}")
-            if self.post_cycle_reset_enabled and self.completed_cycles >= self.cycle_limit:
-                self.perform_cycle_reset_sequence()
-                self.completed_cycles = 0
+            if not action_pressed_after_ad_disappear:
+                action_name = "'Забрать себе'" if self.action_mode == 'take' else "'Отпустить'"
+                print(f"Запуск функции {action_name}...")
+                self.press_action_button()
 
             print("Возвращаемся к первой мини-игре...")
             time.sleep(3)
@@ -439,12 +448,31 @@ class FishingBot:
         current_key = None
 
         finish_template = 'EZEFISH.jpg' if self.action_mode == 'take' else 'otpustit.png'
+        ad_bbox = (837, 1016, 912, 1057)
+        ad_seen_in_roi = False
+        ad_check_timeout = 30.0
+        ad_check_deadline = time.time() + ad_check_timeout
+        ad_timeout_logged = False
+        flow_noise_threshold = 0.7
 
         i = 0
         check_every = 5  # проверять шаблон раз в 5 циклов (подстрой: 5/10/15/20)
         while self.bot_running:
             if self.stop_bot_on_image('stop.png'):
                 return False
+
+            ad_present = self._template_in_region('AD.png', bbox=ad_bbox, threshold=0.85)
+            if ad_present:
+                ad_seen_in_roi = True
+            elif ad_seen_in_roi:
+                print("AD.png пропало в ROI (837, 1016, 912, 1057).")
+                if current_key:
+                    pydirectinput.keyUp(current_key)
+                return 'ad_disappeared'
+            elif time.time() > ad_check_deadline and not ad_timeout_logged:
+                print(f"Таймаут первичного ожидания AD.png: {ad_check_timeout} сек. Продолжаем без этой проверки.")
+                ad_timeout_logged = True
+
             i += 1
             if i % check_every == 0:
                 if self.find_object(finish_template):
@@ -468,14 +496,14 @@ class FishingBot:
                 0.5, 3, 20, 3, 5, 1.2, 0
             )
             flow_x = np.mean(flow[..., 0])
-            if flow_x > 0.5:
+            if flow_x > flow_noise_threshold:
                 if current_key != 'd':
                     if current_key:
                         pydirectinput.keyUp(current_key)
                     pydirectinput.keyDown('d')
                     current_key = 'd'
                     print("Движение вправо, зажимаем D")
-            elif flow_x < -0.5:
+            elif flow_x < -flow_noise_threshold:
                 if current_key != 'a':
                     if current_key:
                         pydirectinput.keyUp(current_key)
@@ -507,12 +535,11 @@ class FishingBot:
                 pyautogui.moveTo(x + 10, y + 10)
                 pyautogui.click()
                 print(f"Кнопка {button_name} нажата.")
-                return True
+                return
 
             time.sleep(poll)
 
         print(f"Кнопка {button_name} не найдена за {timeout} сек -> выходим (False)")
-        return False
 
     def _press_game_key(self, key: str):
         """Надёжное нажатие клавиши в игре: сначала pydirectinput, затем fallback на pyautogui."""
@@ -576,7 +603,7 @@ class FishingBot:
     @prevent_reentry
     def press_knopkasebe_button(self, timeout=3.0, poll=1):
         """Совместимость со старым именем метода."""
-        return self.press_action_button(timeout=timeout, poll=poll)
+        self.press_action_button(timeout=timeout, poll=poll)
 
     def _template_in_region(self, template_path, bbox, threshold=0.85):
         """
@@ -694,3 +721,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+
