@@ -134,7 +134,7 @@ class LicenseActivationWindow(tk.Tk):
 
 
 class Launcher(tk.Tk):
-    CYCLE_RESET_LIMIT = 6
+    CYCLE_RESET_LIMIT = 7
 
     def __init__(self, license_manager: LicenseManager):
         super().__init__()
@@ -148,6 +148,7 @@ class Launcher(tk.Tk):
         self.cfg = {}
 
         self.status_var = tk.StringVar(value="STOPPED")
+        self.license_info_var = tk.StringVar(value="Лицензия: проверка...")
         self.reset_enabled_var = tk.BooleanVar(value=True)
 
         self._configure_styles()
@@ -203,6 +204,8 @@ class Launcher(tk.Tk):
         ttk.Label(header, text="FishingBot", style="Header.TLabel").pack(side="left")
         ttk.Label(header, text="Управление рыбалкой в один клик", style="SubHeader.TLabel").pack(side="left", padx=12)
         ttk.Label(header, textvariable=self.status_var, style="Status.TLabel", padding=(12, 6)).pack(side="right")
+
+        ttk.Label(root, textvariable=self.license_info_var, style="SubHeader.TLabel").pack(anchor="w", pady=(6, 0))
 
         control_card = ttk.Frame(root, style="Card.TFrame", padding=12)
         control_card.pack(fill="x", pady=(12, 8))
@@ -300,7 +303,14 @@ class Launcher(tk.Tk):
         self.after(200, self.poll_status)
 
     def poll_license(self):
-        if not self.license_manager.get_status().is_active:
+        status = self.license_manager.get_status()
+        if status.is_active and status.expires_at:
+            left = timedelta(seconds=status.seconds_left)
+            self.license_info_var.set(f"Лицензия активна, осталось: {left}")
+        else:
+            self.license_info_var.set("Лицензия неактивна")
+
+        if not status.is_active:
             self.on_stop()
             messagebox.showwarning("Лицензия", "Лицензия неактивна. Приложение будет закрыто.")
             self.on_close()
