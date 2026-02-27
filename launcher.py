@@ -1,4 +1,5 @@
 import json
+import logging
 import tkinter as tk
 from datetime import timedelta
 from tkinter import messagebox, ttk
@@ -9,6 +10,8 @@ import main
 from license_manager import LicenseManager
 
 CONFIG_PATH = "config.json"
+
+logger = logging.getLogger(__name__)
 
 
 def load_config(path=CONFIG_PATH):
@@ -263,7 +266,7 @@ class Launcher(tk.Tk):
             hk_id = keyboard.add_hotkey(hotkey, callback)
             self._hotkey_ids.append(hk_id)
         except Exception as e:
-            print(f"[WARN] hotkey {hotkey} disabled: {e}")
+            logger.info(f"[WARN] hotkey {hotkey} disabled: {e}")
 
     def _clear_hotkeys(self):
         for hk_id in self._hotkey_ids:
