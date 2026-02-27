@@ -41,7 +41,7 @@ class LicensePanel(ttk.LabelFrame):
 
         ttk.Label(
             self,
-            text="Ключи не хранятся списком: блоки кратны 5, 8, 3, 9 + checksum. Каждый ключ одноразовый.",
+            text="Произойдет привязка пк.",
             style="Hint.TLabel",
             wraplength=500,
             justify="left",
@@ -138,7 +138,7 @@ class Launcher(tk.Tk):
 
     def __init__(self, license_manager: LicenseManager):
         super().__init__()
-        self.title("FishingBot")
+        self.title("Рыболовный помощник")
         self.geometry("560x360")
         self.minsize(540, 340)
 
@@ -159,6 +159,7 @@ class Launcher(tk.Tk):
 
         self.after(200, self.poll_status)
         self.after(1000, self.poll_license)
+
 
     def _configure_styles(self):
         style = ttk.Style(self)
@@ -226,7 +227,7 @@ class Launcher(tk.Tk):
         reset_box.pack(fill="x", pady=(0, 10))
         ttk.Checkbutton(
             reset_box,
-            text=f"Включить сброс после {self.CYCLE_RESET_LIMIT} циклов",
+            text=f"Включить замену наживки после {self.CYCLE_RESET_LIMIT} циклов",
             variable=self.reset_enabled_var,
             command=self.sync_reset_options,
         ).pack(anchor="w")
