@@ -47,6 +47,9 @@ class FishingBot:
         self.completed_cycles = 0
         self._method_locks = {}
         self.action_mode = 'take'  # take | release
+        self.reset_first_click_coords = (1035, 962)
+        self.reset_second_click_coords = [(1042, 748), (1034, 816)]
+        self._reset_second_click_index = 0
 
     def set_action_mode(self, mode):
         if mode not in ('take', 'release'):
@@ -582,22 +585,34 @@ class FishingBot:
         if not self.bot_running:
             return
 
-        print(f"Достигнут лимит {self.cycle_limit} циклов. Выполняем ESC(2с) -> ESC(6с) -> E(6с) -> E(6с).")
-        key_steps = [
-            (2, 'esc'),
-            (6, 'esc'),
-            (6, 'e'),
-            (6, 'e'),
+        print(
+            f"Достигнут лимит {self.cycle_limit} циклов. "
+            f"Выполняем ESC(2с) -> CLICK1(6с) -> CLICK2(6с, чередование) -> E(6с)."
+        )
+
+        second_click_coords = self.reset_second_click_coords[self._reset_second_click_index]
+        steps = [
+            (2, 'key', 'esc'),
+            (6, 'click', self.reset_first_click_coords),
+            (6, 'click', second_click_coords),
+            (6, 'key', 'e'),
         ]
 
-        for wait_seconds, key in key_steps:
+        for wait_seconds, action_type, payload in steps:
             if not self.bot_running:
                 return
             time.sleep(wait_seconds)
             if not self.bot_running:
                 return
-            self._press_game_key(key)
-            print(f"Нажата клавиша: {key.upper()} (после {wait_seconds}с)")
+            if action_type == 'key':
+                self._press_game_key(payload)
+                print(f"Нажата клавиша: {payload.upper()} (после {wait_seconds}с)")
+            else:
+                x, y = payload
+                pyautogui.click(x=x, y=y)
+                print(f"Сделан клик мышью в ({x}, {y}) (после {wait_seconds}с)")
+
+            self._reset_second_click_index = (self._reset_second_click_index + 1) % len(self.reset_second_click_coords)
 
 
     @prevent_reentry
@@ -721,4 +736,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
