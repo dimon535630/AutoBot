@@ -1,4 +1,5 @@
 import functools
+import logging
 import threading
 import time
 import cv2
@@ -9,6 +10,9 @@ import pydirectinput
 import pygame
 from PIL import ImageGrab
 
+logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
+logger = logging.getLogger(__name__)
+
 # Пути к файлам
 sound_file_path = 'ASK.mp3'
 
@@ -18,7 +22,7 @@ try:
     pygame.mixer.init()
 except Exception as e:
     SOUND_ENABLED = False
-    print(f"[WARN] Звук отключён (pygame.mixer.init не удался): {e}")
+    logger.info(f"[WARN] Звук отключён (pygame.mixer.init не удался): {e}")
 
 
 def prevent_reentry(method):
@@ -28,7 +32,7 @@ def prevent_reentry(method):
     def wrapper(self, *args, **kwargs):
         acquired, lock = self._acquire_method_lock(method.__name__)
         if not acquired:
-            print(f"Пропуск: {method.__name__} уже выполняется.")
+            logger.info(f"Пропуск: {method.__name__} уже выполняется.")
             return None
         try:
             return method(self, *args, **kwargs)
@@ -53,10 +57,10 @@ class FishingBot:
 
     def set_action_mode(self, mode):
         if mode not in ('take', 'release'):
-            print(f"[WARN] Неизвестный режим действия: {mode}")
+            logger.info(f"[WARN] Неизвестный режим действия: {mode}")
             return
         self.action_mode = mode
-        print(f"Режим действия переключен: {'ЗАБРАТЬ СЕБЕ' if mode == 'take' else 'ОТПУСТИТЬ'}")
+        logger.info(f"Режим действия переключен: {'ЗАБРАТЬ СЕБЕ' if mode == 'take' else 'ОТПУСТИТЬ'}")
 
     def _has_red_bar_in_roi(
             self,
@@ -119,18 +123,18 @@ class FishingBot:
         template, name = actions.get(action, actions["take"])
         self.reward_button_template = template
         self.reward_button_name = name
-        print(f"Выбрано действие после рыбалки: {name} ({template}).")
+        logger.info(f"Выбрано действие после рыбалки: {name} ({template}).")
 
     def set_post_cycle_reset(self, enabled: bool):
         """Вкл/выкл последовательность клавиш после N циклов."""
         self.post_cycle_reset_enabled = bool(enabled)
         state = "включено" if self.post_cycle_reset_enabled else "выключено"
-        print(f"Сброс после {self.cycle_limit} циклов: {state}.")
+        logger.info(f"Сброс после {self.cycle_limit} циклов: {state}.")
 
     def set_cycle_limit(self, cycle_limit: int):
         """Изменение лимита циклов для последовательности сброса."""
         self.cycle_limit = max(1, int(cycle_limit))
-        print(f"Новый лимит циклов до сброса: {self.cycle_limit}")
+        logger.info(f"Новый лимит циклов до сброса: {self.cycle_limit}")
 
     def find_object(self, template_path):
         """Поиск изображения на экране."""
@@ -138,11 +142,11 @@ class FishingBot:
         screen_image = cv2.cvtColor(screenshot, cv2.COLOR_RGB2GRAY)
         template = cv2.imread(template_path, cv2.IMREAD_GRAYSCALE)
         if template is None:
-            print(f"Ошибка: файл {template_path} не найден.")
+            logger.info(f"Ошибка: файл {template_path} не найден.")
             return None
         result = cv2.matchTemplate(screen_image, template, cv2.TM_CCOEFF_NORMED)
         _, max_val, _, max_loc = cv2.minMaxLoc(result)
-        print(f"Уровень совпадения для {template_path}: {max_val}")
+        logger.info(f"Уровень совпадения для {template_path}: {max_val}")
         return max_loc if max_val > 0.8 else None
 
     def _extract_hw(self, image):
@@ -160,7 +164,7 @@ class FishingBot:
         screen_image = cv2.cvtColor(screenshot, cv2.COLOR_RGB2GRAY)
         template = cv2.imread(template_path, cv2.IMREAD_GRAYSCALE)
         if template is None:
-            print(f"Ошибка: файл {template_path} не найден.")
+            logger.info(f"Ошибка: файл {template_path} не найден.")
             return None
         if use_blur:
             screen_image = cv2.GaussianBlur(screen_image, (5, 5), 0)
@@ -249,42 +253,42 @@ class FishingBot:
         while self.bot_running:
 
             self.completed_cycles += 1
-            print(f"Цикл завершён: {self.completed_cycles}/{self.cycle_limit}")
+            logger.info(f"Цикл завершён: {self.completed_cycles}/{self.cycle_limit}")
             if self.post_cycle_reset_enabled and self.completed_cycles >= self.cycle_limit:
                 self.perform_cycle_reset_sequence()
                 self.completed_cycles = 0
 
-            print("Ожидание перед первой мини-игрой...")
+            logger.info("Ожидание перед первой мини-игрой...")
             time.sleep(5)
 
-            print("Запуск первой мини игры...")
+            logger.info("Запуск первой мини игры...")
             self.play_mini_game()
 
-            print("Запуск второй мини-игры...")
+            logger.info("Запуск второй мини-игры...")
             self.second_mini_game()
 
 
-            print("Запуск третьей мини-игры...")
+            logger.info("Запуск третьей мини-игры...")
             track_result = self.track_image_movement()
             action_pressed_after_ad_disappear = False
             if track_result == 'ad_disappeared' and self.bot_running:
                 action_name = "'Забрать себе'" if self.action_mode == 'take' else "'Отпустить'"
-                print(f"AD.png пропало в ROI -> пробуем нажать {action_name}...")
+                logger.info(f"AD.png пропало в ROI -> пробуем нажать {action_name}...")
                 ok = self.press_action_button()
                 if not ok and self.bot_running:
-                    print("Не удалось нажать кнопку действия после пропажи AD.png -> возврат к первой мини-игре")
+                    logger.info("Не удалось нажать кнопку действия после пропажи AD.png -> возврат к первой мини-игре")
                     continue
                 action_pressed_after_ad_disappear = True
 
             if not action_pressed_after_ad_disappear:
                 action_name = "'Забрать себе'" if self.action_mode == 'take' else "'Отпустить'"
-                print(f"Запуск функции {action_name}...")
+                logger.info(f"Запуск функции {action_name}...")
                 self.press_action_button()
 
-            print("Возвращаемся к первой мини-игре...")
+            logger.info("Возвращаемся к первой мини-игре...")
             time.sleep(3)
 
-        print("Цикл остановлен (bot_running = False).")
+        logger.info("Цикл остановлен (bot_running = False).")
 
     @prevent_reentry
     def play_mini_game(self):
@@ -305,7 +309,7 @@ class FishingBot:
             screenshot = np.array(ImageGrab.grab())  # RGB
             hw = self._extract_hw(screenshot)
             if hw is None:
-                print("[WARN] Некорректный кадр в play_mini_game, пропускаем итерацию")
+                logger.info("[WARN] Некорректный кадр в play_mini_game, пропускаем итерацию")
                 time.sleep(0.05)
                 continue
             h, w = hw
@@ -344,7 +348,7 @@ class FishingBot:
                 # Если уже в зоне — жмём сразу.
                 #if green_left <= slider_center <= green_right:
                     #pyautogui.press('space')
-                    #print("Ползунок в зелёной зоне, нажат пробел.")
+                    #logger.info("Ползунок в зелёной зоне, нажат пробел.")
                     #return False
 
                 # Предсказание через 1 кадр: если следующая позиция попадёт в зону,
@@ -355,7 +359,7 @@ class FishingBot:
 
                 if near_zone and will_enter_zone:
                     pyautogui.press('space')
-                    print(f"Раннее нажатие до входа в зелёную зону (lead={lead_px}px), нажат пробел.")
+                    logger.info(f"Раннее нажатие до входа в зелёную зону (lead={lead_px}px), нажат пробел.")
                     return False
 
                 previous_slider_center = slider_center
@@ -370,7 +374,7 @@ class FishingBot:
         ]
 
         if any(img is None for img in bubbles_images):
-            print("Ошибка загрузки одного из шаблонов пузырьков (q11/q12)!")
+            logger.info("Ошибка загрузки одного из шаблонов пузырьков (q11/q12)!")
             return True
 
         if show_roi:
@@ -415,7 +419,7 @@ class FishingBot:
 
                 # ✅ ВМЕСТО q13/q14: если появился красный бар — жмём пробел
                 if self._has_red_bar_in_roi(roi_img, bottom_part=0.35):
-                    print("Красная полоска найдена! Нажимаем пробел.")
+                    logger.info("Красная полоска найдена! Нажимаем пробел.")
                     pyautogui.press('space')
                     time.sleep(0.3)
                     return False
@@ -433,7 +437,7 @@ class FishingBot:
                     _, max_val, _, _ = cv2.minMaxLoc(result)
 
                     if max_val > 0.8:
-                        print("Пузырьки найдены! Нажимаем пробел.")
+                        logger.info("Пузырьки найдены! Нажимаем пробел.")
                         pyautogui.press('space')
                         time.sleep(0.3)
                         return False
@@ -468,18 +472,18 @@ class FishingBot:
             if ad_present:
                 ad_seen_in_roi = True
             elif ad_seen_in_roi:
-                print("AD.png пропало в ROI (837, 1016, 912, 1057).")
+                logger.info("AD.png пропало в ROI (837, 1016, 912, 1057).")
                 if current_key:
                     pydirectinput.keyUp(current_key)
                 return 'ad_disappeared'
             elif time.time() > ad_check_deadline and not ad_timeout_logged:
-                print(f"Таймаут первичного ожидания AD.png: {ad_check_timeout} сек. Продолжаем без этой проверки.")
+                logger.info(f"Таймаут первичного ожидания AD.png: {ad_check_timeout} сек. Продолжаем без этой проверки.")
                 ad_timeout_logged = True
 
             i += 1
             if i % check_every == 0:
                 if self.find_object(finish_template):
-                    print(f"Уведомление о рыбе найдено ({finish_template}). Завершаем мини-игру.")
+                    logger.info(f"Уведомление о рыбе найдено ({finish_template}). Завершаем мини-игру.")
                     if current_key:
                         pydirectinput.keyUp(current_key)
                     return True
@@ -505,14 +509,14 @@ class FishingBot:
                         pydirectinput.keyUp(current_key)
                     pydirectinput.keyDown('d')
                     current_key = 'd'
-                    print("Движение вправо, зажимаем D")
+                    logger.info("Движение вправо, зажимаем D")
             elif flow_x < -flow_noise_threshold:
                 if current_key != 'a':
                     if current_key:
                         pydirectinput.keyUp(current_key)
                     pydirectinput.keyDown('a')
                     current_key = 'a'
-                    print("Движение влево, зажимаем A")
+                    logger.info("Движение влево, зажимаем A")
             else:
                 if current_key:
                     pydirectinput.keyUp(current_key)
@@ -537,12 +541,12 @@ class FishingBot:
                 x, y = loc
                 pyautogui.moveTo(x + 10, y + 10)
                 pyautogui.click()
-                print(f"Кнопка {button_name} нажата.")
+                logger.info(f"Кнопка {button_name} нажата.")
                 return
 
             time.sleep(poll)
 
-        print(f"Кнопка {button_name} не найдена за {timeout} сек -> выходим (False)")
+        logger.info(f"Кнопка {button_name} не найдена за {timeout} сек -> выходим (False)")
 
     def _press_game_key(self, key: str):
         """Надёжное нажатие клавиши в игре: сначала pydirectinput, затем fallback на pyautogui."""
@@ -552,13 +556,13 @@ class FishingBot:
             pydirectinput.keyUp(key)
             return
         except Exception as e:
-            print(f"[WARN] pydirectinput keyDown/keyUp для {key} не сработал: {e}")
+            logger.info(f"[WARN] pydirectinput keyDown/keyUp для {key} не сработал: {e}")
 
         try:
             pydirectinput.press(key)
             return
         except Exception as e:
-            print(f"[WARN] pydirectinput.press для {key} не сработал: {e}")
+            logger.info(f"[WARN] pydirectinput.press для {key} не сработал: {e}")
 
         pyautogui.press(key)
 
@@ -570,13 +574,13 @@ class FishingBot:
             pydirectinput.keyUp(key)
             return
         except Exception as e:
-            print(f"[WARN] pydirectinput keyDown/keyUp для {key} не сработал: {e}")
+            logger.info(f"[WARN] pydirectinput keyDown/keyUp для {key} не сработал: {e}")
 
         try:
             pydirectinput.press(key)
             return
         except Exception as e:
-            print(f"[WARN] pydirectinput.press для {key} не сработал: {e}")
+            logger.info(f"[WARN] pydirectinput.press для {key} не сработал: {e}")
 
         pyautogui.press(key)
 
@@ -585,7 +589,7 @@ class FishingBot:
         if not self.bot_running:
             return
 
-        print(
+        logger.info(
             f"Достигнут лимит {self.cycle_limit} циклов. "
             f"Выполняем ESC(2с) -> CLICK1(6с) -> CLICK2(6с, чередование) -> E(6с)."
         )
@@ -606,11 +610,11 @@ class FishingBot:
                 return
             if action_type == 'key':
                 self._press_game_key(payload)
-                print(f"Нажата клавиша: {payload.upper()} (после {wait_seconds}с)")
+                logger.info(f"Нажата клавиша: {payload.upper()} (после {wait_seconds}с)")
             else:
                 x, y = payload
                 pyautogui.click(x=x, y=y)
-                print(f"Сделан клик мышью в ({x}, {y}) (после {wait_seconds}с)")
+                logger.info(f"Сделан клик мышью в ({x}, {y}) (после {wait_seconds}с)")
 
             self._reset_second_click_index = (self._reset_second_click_index + 1) % len(self.reset_second_click_coords)
 
@@ -627,7 +631,7 @@ class FishingBot:
         """
         tpl = cv2.imread(template_path, cv2.IMREAD_GRAYSCALE)
         if tpl is None:
-            print(f"Не удалось загрузить шаблон: {template_path}")
+            logger.info(f"Не удалось загрузить шаблон: {template_path}")
             return False
 
         roi = np.array(ImageGrab.grab(bbox=bbox))  # RGB
@@ -649,7 +653,7 @@ class FishingBot:
         Иначе False.
         """
         if self._template_in_region(template_path, bbox, threshold):
-            print("Найдена стоп-картинка -> ESC и остановка бота.")
+            logger.info("Найдена стоп-картинка -> ESC и остановка бота.")
             pyautogui.press('esc')
             self.bot_running = False
             return True
@@ -673,32 +677,32 @@ class BotController:
             pygame.mixer.music.load(sound_file_path)
             pygame.mixer.music.play()
         except Exception as e:
-            print(f"[WARN] Ошибка воспроизведения звука: {e}")
+            logger.info(f"[WARN] Ошибка воспроизведения звука: {e}")
 
     def start(self):
         with self._lock:
             if self.bot.bot_running:
-                print("Бот уже запущен.")
+                logger.info("Бот уже запущен.")
                 return
             self.play_sound()
             self.bot.completed_cycles = 0
             self.bot.bot_running = True
             self._thread = threading.Thread(target=self.bot.start_fishing, daemon=True)
             self._thread.start()
-            print("Бот запущен.")
+            logger.info("Бот запущен.")
 
     def stop(self):
         with self._lock:
             if not self.bot.bot_running:
-                print("Бот уже остановлен.")
+                logger.info("Бот уже остановлен.")
                 return
             self.bot.stop_fishing()
             self.play_sound()
-            print("Бот остановлен.")
+            logger.info("Бот остановлен.")
 
     def press_esc(self):
         keyboard.press_and_release('esc')
-        print("Нажата клавиша Esc (через клавишу 0).")
+        logger.info("Нажата клавиша Esc (через клавишу 0).")
 
     def set_take_mode(self):
         self.bot.set_action_mode('take')
@@ -707,7 +711,7 @@ class BotController:
         self.bot.set_action_mode('release')
 
     def exit_program(self):
-        print("Выход: останавливаем бота и закрываем программу...")
+        logger.info("Выход: останавливаем бота и закрываем программу...")
         self.stop()
         raise SystemExit
 
@@ -722,11 +726,11 @@ def main():
     # ESC = выйти из программы
     keyboard.add_hotkey('esc', ctl.exit_program)
 
-    print("Горячие клавиши активны:")
-    print("  +  -> старт")
-    print("  -  -> стоп")
-    print("  0  -> нажать Esc в игре")
-    print("  Esc -> выйти из программы")
+    logger.info("Горячие клавиши активны:")
+    logger.info("  +  -> старт")
+    logger.info("  -  -> стоп")
+    logger.info("  0  -> нажать Esc в игре")
+    logger.info("  Esc -> выйти из программы")
 
     try:
         keyboard.wait()  # ждём любые события
