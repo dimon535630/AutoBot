@@ -1,5 +1,8 @@
 import functools
 import logging
+import os
+from pathlib import Path
+import sys
 import threading
 import time
 import cv2
@@ -13,8 +16,21 @@ from PIL import ImageGrab
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
 logger = logging.getLogger(__name__)
 
+
+def asset_path(relative_path: str) -> str:
+    """Путь к ресурсу, совместимый с запуском из исходников и из PyInstaller exe."""
+    if os.path.isabs(relative_path):
+        return relative_path
+
+    direct_path = Path(relative_path)
+    if direct_path.exists():
+        return str(direct_path)
+
+    base_dir = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parent))
+    return str(base_dir / relative_path)
+
 # Пути к файлам
-sound_file_path = 'ASK.mp3'
+sound_file_path = asset_path('ASK.mp3')
 
 # Инициализация звука (если не получится — просто отключим звук)
 SOUND_ENABLED = True
@@ -54,6 +70,23 @@ class FishingBot:
         self.reset_first_click_coords = (1035, 962)
         self.reset_second_click_coords = [(1042, 748), (1034, 816)]
         self._reset_second_click_index = 0
+        self.base_resolution = (1920, 1080)
+
+    def _scale_bbox_for_screen(self, bbox):
+        """Масштабирует bbox из базового 1920x1080 под текущее разрешение."""
+        left, top, right, bottom = bbox
+        screen_w, screen_h = pyautogui.size()
+        base_w, base_h = self.base_resolution
+
+        scale_x = screen_w / base_w
+        scale_y = screen_h / base_h
+
+        return (
+            int(round(left * scale_x)),
+            int(round(top * scale_y)),
+            int(round(right * scale_x)),
+            int(round(bottom * scale_y)),
+        )
 
     def set_action_mode(self, mode):
         if mode not in ('take', 'release'):
@@ -140,7 +173,7 @@ class FishingBot:
         """Поиск изображения на экране."""
         screenshot = np.array(ImageGrab.grab())
         screen_image = cv2.cvtColor(screenshot, cv2.COLOR_RGB2GRAY)
-        template = cv2.imread(template_path, cv2.IMREAD_GRAYSCALE)
+        template = cv2.imread(asset_path(template_path), cv2.IMREAD_GRAYSCALE)
         if template is None:
             logger.info(f"Ошибка: файл {template_path} не найден.")
             return None
@@ -162,7 +195,7 @@ class FishingBot:
         """Универсальный поиск с опциональным размытием."""
         screenshot = np.array(ImageGrab.grab())
         screen_image = cv2.cvtColor(screenshot, cv2.COLOR_RGB2GRAY)
-        template = cv2.imread(template_path, cv2.IMREAD_GRAYSCALE)
+        template = cv2.imread(asset_path(template_path), cv2.IMREAD_GRAYSCALE)
         if template is None:
             logger.info(f"Ошибка: файл {template_path} не найден.")
             return None
@@ -369,8 +402,8 @@ class FishingBot:
     @prevent_reentry
     def second_mini_game(self, show_roi=False):
         bubbles_images = [
-            cv2.imread('q11.png', cv2.IMREAD_GRAYSCALE),
-            cv2.imread('q12.png', cv2.IMREAD_GRAYSCALE),
+            cv2.imread(asset_path('q11.png'), cv2.IMREAD_GRAYSCALE),
+            cv2.imread(asset_path('q12.png'), cv2.IMREAD_GRAYSCALE),
         ]
 
         if any(img is None for img in bubbles_images):
@@ -390,8 +423,7 @@ class FishingBot:
                     continue
                 height, width = hw
 
-                left, right = 1325, 1528
-                top, bottom = 822, 1004
+                left, top, right, bottom = self._scale_bbox_for_screen((1325, 822, 1528, 1004))
 
                 left, right = sorted((left, right))
                 top, bottom = sorted((top, bottom))
@@ -629,7 +661,7 @@ class FishingBot:
         bbox = (left, top, right, bottom) в координатах экрана.
         Возвращает True если найдено совпадение >= threshold.
         """
-        tpl = cv2.imread(template_path, cv2.IMREAD_GRAYSCALE)
+        tpl = cv2.imread(asset_path(template_path), cv2.IMREAD_GRAYSCALE)
         if tpl is None:
             logger.info(f"Не удалось загрузить шаблон: {template_path}")
             return False
