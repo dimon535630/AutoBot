@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 def asset_path(relative_path: str) -> str:
-    """Путь к ресурсу, совместимый с запуском из исходников и из PyInstaller exe."""
+    """Путь к ресурсу для запуска из исходников, PyInstaller и Nuitka."""
     if os.path.isabs(relative_path):
         return relative_path
 
@@ -26,8 +26,20 @@ def asset_path(relative_path: str) -> str:
     if direct_path.exists():
         return str(direct_path)
 
-    base_dir = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parent))
-    return str(base_dir / relative_path)
+    candidates = [
+        Path(getattr(sys, "_MEIPASS", "")),
+        Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(),
+        Path(__file__).resolve().parent,
+    ]
+
+    for base_dir in candidates:
+        if not str(base_dir):
+            continue
+        candidate = base_dir / relative_path
+        if candidate.exists():
+            return str(candidate)
+
+    return str(Path(__file__).resolve().parent / relative_path)
 
 # Пути к файлам
 sound_file_path = asset_path('ASK.mp3')

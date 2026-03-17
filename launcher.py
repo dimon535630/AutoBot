@@ -15,7 +15,8 @@ logger = logging.getLogger(__name__)
 
 
 def load_config(path=CONFIG_PATH):
-    with open(path, "r", encoding="utf-8") as f:
+    resolved = main.asset_path(path)
+    with open(resolved, "r", encoding="utf-8") as f:
         return json.load(f)
 
 
@@ -311,11 +312,13 @@ class Launcher(tk.Tk):
             left = timedelta(seconds=status.seconds_left)
             self.license_info_var.set(f"Лицензия активна, осталось: {left}")
         else:
-            self.license_info_var.set("Лицензия неактивна")
+            reason = f" ({status.invalid_reason})" if status.invalid_reason else ""
+            self.license_info_var.set(f"Лицензия неактивна{reason}")
 
         if not status.is_active:
             self.on_stop()
-            messagebox.showwarning("Лицензия", "Лицензия неактивна. Приложение будет закрыто.")
+            msg = status.invalid_reason or "Лицензия неактивна. Приложение будет закрыто."
+            messagebox.showwarning("Лицензия", msg)
             self.on_close()
             return
         self.after(1000, self.poll_license)
