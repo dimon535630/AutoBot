@@ -66,7 +66,7 @@ class LicensePanel(ttk.LabelFrame):
             self.license_manager.activate_with_key(self.key_to_activate.get())
             self.key_to_activate.set("")
             self.refresh_status()
-            messagebox.showinfo("ОК", "Лицензия активирована")
+            messagebox.showinfo("ОК", "Лицензия активирована и привязана к текущему ПК")
         except Exception as e:
             messagebox.showerror("Ошибка активации", str(e))
 
@@ -315,7 +315,8 @@ class Launcher(tk.Tk):
 
         if not status.is_active:
             self.on_stop()
-            messagebox.showwarning("Лицензия", "Лицензия неактивна. Приложение будет закрыто.")
+            warning_text = status.reason or "Лицензия неактивна. Приложение будет закрыто."
+            messagebox.showwarning("Лицензия", warning_text)
             self.on_close()
             return
         self.after(1000, self.poll_license)
