@@ -1,6 +1,8 @@
 import hashlib
 import re
+import socket
 import sqlite3
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -16,6 +18,7 @@ class LicenseStatus:
     is_active: bool
     key_value: Optional[str]
     expires_at: Optional[datetime]
+    invalid_reason: Optional[str] = None
 
     @property
     def seconds_left(self) -> int:
@@ -42,11 +45,22 @@ class LicenseManager:
                     id INTEGER PRIMARY KEY CHECK(id = 1),
                     active_key TEXT,
                     activated_at TEXT,
-                    expires_at TEXT
+                    expires_at TEXT,
+                    machine_name TEXT,
+                    hardware_hash TEXT
                 )
                 """
             )
             conn.execute("INSERT OR IGNORE INTO license_state(id) VALUES (1)")
+
+            existing_columns = {
+                row["name"] for row in conn.execute("PRAGMA table_info(license_state)").fetchall()
+            }
+            if "machine_name" not in existing_columns:
+                conn.execute("ALTER TABLE license_state ADD COLUMN machine_name TEXT")
+            if "hardware_hash" not in existing_columns:
+                conn.execute("ALTER TABLE license_state ADD COLUMN hardware_hash TEXT")
+
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS used_keys (
@@ -61,6 +75,13 @@ class LicenseManager:
 
     def _key_hash(self, key_value: str) -> str:
         return hashlib.sha256(key_value.encode("utf-8")).hexdigest().upper()
+
+    def _hardware_fingerprint(self) -> tuple[str, str]:
+        machine_name = socket.gethostname()
+        mac = f"{uuid.getnode():012X}"
+        raw = f"{machine_name}|{mac}"
+        hardware_hash = hashlib.sha256(raw.encode("utf-8")).hexdigest().upper()
+        return machine_name, hardware_hash
 
     def validate_key_format(self, key_value: str) -> int:
         key_value = key_value.strip().upper()
@@ -90,6 +111,7 @@ class LicenseManager:
 
         now = datetime.utcnow()
         expires_at = now + timedelta(days=duration)
+        machine_name, hardware_hash = self._hardware_fingerprint()
 
         with self._connect() as conn:
             used = conn.execute("SELECT 1 FROM used_keys WHERE key_hash = ?", (key_hash,)).fetchone()
@@ -103,17 +125,19 @@ class LicenseManager:
             conn.execute(
                 """
                 UPDATE license_state
-                SET active_key = ?, activated_at = ?, expires_at = ?
+                SET active_key = ?, activated_at = ?, expires_at = ?, machine_name = ?, hardware_hash = ?
                 WHERE id = 1
                 """,
-                (key_value, now.isoformat(), expires_at.isoformat()),
+                (key_value, now.isoformat(), expires_at.isoformat(), machine_name, hardware_hash),
             )
 
         return LicenseStatus(True, key_value, expires_at)
 
     def get_status(self) -> LicenseStatus:
         with self._connect() as conn:
-            row = conn.execute("SELECT active_key, expires_at FROM license_state WHERE id = 1").fetchone()
+            row = conn.execute(
+                "SELECT active_key, expires_at, machine_name, hardware_hash FROM license_state WHERE id = 1"
+            ).fetchone()
 
         if not row or not row["active_key"] or not row["expires_at"]:
             return LicenseStatus(False, None, None)
@@ -121,10 +145,26 @@ class LicenseManager:
         expires_at = datetime.fromisoformat(row["expires_at"])
         if datetime.utcnow() >= expires_at:
             self.deactivate()
-            return LicenseStatus(False, None, None)
+            return LicenseStatus(False, None, None, "Срок лицензии истёк")
+
+        machine_name, hardware_hash = self._hardware_fingerprint()
+        if row["machine_name"] != machine_name or row["hardware_hash"] != hardware_hash:
+            return LicenseStatus(
+                False,
+                row["active_key"],
+                expires_at,
+                "Лицензия привязана к другому ПК (MAC + имя компьютера не совпадают)",
+            )
 
         return LicenseStatus(True, row["active_key"], expires_at)
 
     def deactivate(self) -> None:
         with self._connect() as conn:
-            conn.execute("UPDATE license_state SET active_key = NULL, activated_at = NULL, expires_at = NULL WHERE id = 1")
+            conn.execute(
+                """
+                UPDATE license_state
+                SET active_key = NULL, activated_at = NULL, expires_at = NULL,
+                    machine_name = NULL, hardware_hash = NULL
+                WHERE id = 1
+                """
+            )
