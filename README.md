@@ -21,6 +21,16 @@
 
 Каждый ключ **одноразовый**: повторная активация того же ключа будет отклонена.
 
+## Привязка лицензии к ПК
+
+При **первой активации** ключа программа запоминает отпечаток текущего ПК:
+- MAC-адрес
+- имя компьютера
+
+При каждом следующем запуске проверяется совпадение отпечатка.
+Если запустить программу на другом ПК, лицензия будет считаться неактивной.
+
+
 ## Генерация ключей
 
 Ключи генерируются в `key_generator.py`.
@@ -32,16 +42,16 @@ python key_generator.py --days 7
 python key_generator.py --days 14 --count 3
 python key_generator.py --days 30 --count 10
 ```
-## Сборка полного Windows EXE-пакета
+## Сборка Windows EXE через Nuitka (единый файл, без консоли)
 
-В этом репозитории добавлен GitHub Actions workflow `.github/workflows/build-windows-exe.yml`,
-который собирает **полный Windows-пакет** (папка `launcher` со всеми нужными файлами) и упаковывает его в `launcher-windows.zip`.
+В репозитории есть GitHub Actions workflow `.github/workflows/build-windows-exe.yml`,
+который собирает **единый `launcher.exe`** через Nuitka в режиме onefile и без консоли.
 
 ### Как получить готовые файлы
 
 1. Откройте вкладку **Actions** в GitHub.
 2. Запустите workflow **Build Windows EXE** (кнопка **Run workflow**).
 3. После завершения скачайте artifact **launcher-windows**.
-4. Распакуйте `launcher-windows.zip` — внутри будет полностью собранный набор файлов для запуска.
+4. Распакуйте `launcher-windows.zip` — внутри будет один файл `launcher.exe`.
 
 > Почему через Actions: текущая Linux-среда не может нативно собрать Windows `.exe`, поэтому сборка делается на `windows-latest`.
