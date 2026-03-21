@@ -744,10 +744,6 @@ class BotController:
             self.play_sound()
             logger.info("Бот остановлен.")
 
-    def press_esc(self):
-        keyboard.press_and_release('esc')
-        logger.info("Нажата клавиша Esc (через клавишу 0).")
-
     def set_take_mode(self):
         self.bot.set_action_mode('take')
 
@@ -765,16 +761,10 @@ def main():
 
     keyboard.add_hotkey('+', ctl.start)
     keyboard.add_hotkey('-', ctl.stop)
-    keyboard.add_hotkey('0', ctl.press_esc)
-
-    # ESC = выйти из программы
-    keyboard.add_hotkey('esc', ctl.exit_program)
 
     logger.info("Горячие клавиши активны:")
     logger.info("  +  -> старт")
     logger.info("  -  -> стоп")
-    logger.info("  0  -> нажать Esc в игре")
-    logger.info("  Esc -> выйти из программы")
 
     try:
         keyboard.wait()  # ждём любые события
