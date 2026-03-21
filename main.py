@@ -83,6 +83,7 @@ class FishingBot:
         self.reset_second_click_coords = [(1042, 748), (1034, 816)]
         self._reset_second_click_index = 0
         self.base_resolution = (1920, 1080)
+        self._movement_keys = ("a", "d")
 
     def _scale_bbox_for_screen(self, bbox):
         """Масштабирует bbox из базового 1920x1080 под текущее разрешение."""
@@ -508,70 +509,79 @@ class FishingBot:
 
         i = 0
         check_every = 5  # проверять шаблон раз в 5 циклов (подстрой: 5/10/15/20)
-        while self.bot_running:
-            if self.stop_bot_on_image('stop.png'):
-                return False
+        try:
+            while self.bot_running:
+                if self.stop_bot_on_image('stop.png'):
+                    return False
 
-            ad_present = self._template_in_region('AD.png', bbox=ad_bbox, threshold=0.85)
-            if ad_present:
-                ad_seen_in_roi = True
-            elif ad_seen_in_roi:
-                logger.info("AD.png пропало в ROI (837, 1016, 912, 1057).")
-                if current_key:
-                    pydirectinput.keyUp(current_key)
-                return 'ad_disappeared'
-            elif time.time() > ad_check_deadline and not ad_timeout_logged:
-                logger.info(f"Таймаут первичного ожидания AD.png: {ad_check_timeout} сек. Продолжаем без этой проверки.")
-                ad_timeout_logged = True
-
-            i += 1
-            if i % check_every == 0:
-                if self.find_object(finish_template):
-                    logger.info(f"Уведомление о рыбе найдено ({finish_template}). Завершаем мини-игру.")
+                ad_present = self._template_in_region('AD.png', bbox=ad_bbox, threshold=0.85)
+                if ad_present:
+                    ad_seen_in_roi = True
+                elif ad_seen_in_roi:
+                    logger.info("AD.png пропало в ROI (837, 1016, 912, 1057).")
                     if current_key:
                         pydirectinput.keyUp(current_key)
-                    return True
+                    return 'ad_disappeared'
+                elif time.time() > ad_check_deadline and not ad_timeout_logged:
+                    logger.info(f"Таймаут первичного ожидания AD.png: {ad_check_timeout} сек. Продолжаем без этой проверки.")
+                    ad_timeout_logged = True
 
-            screenshot = ImageGrab.grab()
-            screen_np = np.array(screenshot)
-            screen_resized = cv2.resize(screen_np, (640, 360))
-            screen_gray = cv2.cvtColor(screen_resized, cv2.COLOR_RGB2GRAY)
+                i += 1
+                if i % check_every == 0:
+                    if self.find_object(finish_template):
+                        logger.info(f"Уведомление о рыбе найдено ({finish_template}). Завершаем мини-игру.")
+                        if current_key:
+                            pydirectinput.keyUp(current_key)
+                        return True
 
-            if previous_frame is None:
+                screenshot = ImageGrab.grab()
+                screen_np = np.array(screenshot)
+                screen_resized = cv2.resize(screen_np, (640, 360))
+                screen_gray = cv2.cvtColor(screen_resized, cv2.COLOR_RGB2GRAY)
+
+                if previous_frame is None:
+                    previous_frame = screen_gray
+                    time.sleep(0.01)
+                    continue
+
+                flow = cv2.calcOpticalFlowFarneback(  # type: ignore[arg-type]
+                    previous_frame, screen_gray, None,
+                    0.5, 3, 20, 3, 5, 1.2, 0
+                )
+                flow_x = np.mean(flow[..., 0])
+                if flow_x > flow_noise_threshold:
+                    if current_key != 'd':
+                        if current_key:
+                            pydirectinput.keyUp(current_key)
+                        pydirectinput.keyDown('d')
+                        current_key = 'd'
+                        logger.info("Движение вправо, зажимаем D")
+                elif flow_x < -flow_noise_threshold:
+                    if current_key != 'a':
+                        if current_key:
+                            pydirectinput.keyUp(current_key)
+                        pydirectinput.keyDown('a')
+                        current_key = 'a'
+                        logger.info("Движение влево, зажимаем A")
+                else:
+                    if current_key:
+                        pydirectinput.keyUp(current_key)
+                        current_key = None
+
                 previous_frame = screen_gray
                 time.sleep(0.01)
-                continue
+        finally:
+            self.release_movement_keys()
 
-            flow = cv2.calcOpticalFlowFarneback(  # type: ignore[arg-type]
-                previous_frame, screen_gray, None,
-                0.5, 3, 20, 3, 5, 1.2, 0
-            )
-            flow_x = np.mean(flow[..., 0])
-            if flow_x > flow_noise_threshold:
-                if current_key != 'd':
-                    if current_key:
-                        pydirectinput.keyUp(current_key)
-                    pydirectinput.keyDown('d')
-                    current_key = 'd'
-                    logger.info("Движение вправо, зажимаем D")
-            elif flow_x < -flow_noise_threshold:
-                if current_key != 'a':
-                    if current_key:
-                        pydirectinput.keyUp(current_key)
-                    pydirectinput.keyDown('a')
-                    current_key = 'a'
-                    logger.info("Движение влево, зажимаем A")
-            else:
-                if current_key:
-                    pydirectinput.keyUp(current_key)
-                    current_key = None
-
-            previous_frame = screen_gray
-            time.sleep(0.01)
-
-        if current_key:
-            pydirectinput.keyUp(current_key)
         return False
+
+    def release_movement_keys(self):
+        """Страховка от «залипания» A/D: всегда отпускаем обе клавиши."""
+        for key in self._movement_keys:
+            try:
+                pydirectinput.keyUp(key)
+            except Exception as e:
+                logger.info(f"[WARN] Не удалось отпустить клавишу {key.upper()}: {e}")
 
     def press_action_button(self, timeout=3.0, poll=1):
         """Нажатие кнопки действия в зависимости от режима (забрать/отпустить)."""
@@ -706,6 +716,7 @@ class FishingBot:
     def stop_fishing(self):
         """Остановка бота."""
         self.bot_running = False
+        self.release_movement_keys()
 
 
 class BotController:
@@ -728,6 +739,7 @@ class BotController:
             if self.bot.bot_running:
                 logger.info("Бот уже запущен.")
                 return
+            self.bot.release_movement_keys()
             self.play_sound()
             self.bot.completed_cycles = 0
             self.bot.bot_running = True
@@ -739,14 +751,12 @@ class BotController:
         with self._lock:
             if not self.bot.bot_running:
                 logger.info("Бот уже остановлен.")
+                self.bot.release_movement_keys()
                 return
             self.bot.stop_fishing()
+            self.bot.release_movement_keys()
             self.play_sound()
             logger.info("Бот остановлен.")
-
-    def press_esc(self):
-        keyboard.press_and_release('esc')
-        logger.info("Нажата клавиша Esc (через клавишу 0).")
 
     def set_take_mode(self):
         self.bot.set_action_mode('take')
@@ -765,16 +775,10 @@ def main():
 
     keyboard.add_hotkey('+', ctl.start)
     keyboard.add_hotkey('-', ctl.stop)
-    keyboard.add_hotkey('0', ctl.press_esc)
-
-    # ESC = выйти из программы
-    keyboard.add_hotkey('esc', ctl.exit_program)
 
     logger.info("Горячие клавиши активны:")
     logger.info("  +  -> старт")
     logger.info("  -  -> стоп")
-    logger.info("  0  -> нажать Esc в игре")
-    logger.info("  Esc -> выйти из программы")
 
     try:
         keyboard.wait()  # ждём любые события
