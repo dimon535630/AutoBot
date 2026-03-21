@@ -149,8 +149,8 @@ class Launcher(tk.Tk):
     def __init__(self, license_manager: LicenseManager):
         super().__init__()
         self.title("Рыболовный помощник")
-        self.geometry("560x360")
-        self.minsize(540, 340)
+        self.geometry("620x460")
+        self.minsize(600, 430)
 
         self._hotkey_ids = []
         self.ctl = main.BotController()
