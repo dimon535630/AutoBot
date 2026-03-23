@@ -314,21 +314,11 @@ class FishingBot:
 
 
             logger.info("Запуск третьей мини-игры...")
-            track_result = self.track_image_movement()
-            action_pressed_after_ad_disappear = False
-            if track_result == 'ad_disappeared' and self.bot_running:
-                action_name = "'Забрать себе'" if self.action_mode == 'take' else "'Отпустить'"
-                logger.info(f"AD.png пропало в ROI -> пробуем нажать {action_name}...")
-                ok = self.press_action_button()
-                if not ok and self.bot_running:
-                    logger.info("Не удалось нажать кнопку действия после пропажи AD.png -> возврат к первой мини-игре")
-                    continue
-                action_pressed_after_ad_disappear = True
+            self.track_image_movement()
 
-            if not action_pressed_after_ad_disappear:
-                action_name = "'Забрать себе'" if self.action_mode == 'take' else "'Отпустить'"
-                logger.info(f"Запуск функции {action_name}...")
-                self.press_action_button()
+            action_name = "'Забрать себе'" if self.action_mode == 'take' else "'Отпустить'"
+            logger.info(f"Запуск функции {action_name}...")
+            self.press_action_button()
 
             logger.info("Возвращаемся к первой мини-игре...")
             time.sleep(3)
@@ -499,11 +489,6 @@ class FishingBot:
         current_key = None
 
         finish_template = 'EZEFISH.jpg' if self.action_mode == 'take' else 'otpustit.png'
-        ad_bbox = (837, 1016, 912, 1057)
-        ad_seen_in_roi = False
-        ad_check_timeout = 30.0
-        ad_check_deadline = time.time() + ad_check_timeout
-        ad_timeout_logged = False
         flow_noise_threshold = 0.7
 
         i = 0
@@ -511,18 +496,6 @@ class FishingBot:
         while self.bot_running:
             if self.stop_bot_on_image('stop.png'):
                 return False
-
-            ad_present = self._template_in_region('AD.png', bbox=ad_bbox, threshold=0.85)
-            if ad_present:
-                ad_seen_in_roi = True
-            elif ad_seen_in_roi:
-                logger.info("AD.png пропало в ROI (837, 1016, 912, 1057).")
-                if current_key:
-                    pydirectinput.keyUp(current_key)
-                return 'ad_disappeared'
-            elif time.time() > ad_check_deadline and not ad_timeout_logged:
-                logger.info(f"Таймаут первичного ожидания AD.png: {ad_check_timeout} сек. Продолжаем без этой проверки.")
-                ad_timeout_logged = True
 
             i += 1
             if i % check_every == 0:
@@ -744,10 +717,6 @@ class BotController:
             self.play_sound()
             logger.info("Бот остановлен.")
 
-    def press_esc(self):
-        keyboard.press_and_release('esc')
-        logger.info("Нажата клавиша Esc (через клавишу 0).")
-
     def set_take_mode(self):
         self.bot.set_action_mode('take')
 
@@ -765,16 +734,10 @@ def main():
 
     keyboard.add_hotkey('+', ctl.start)
     keyboard.add_hotkey('-', ctl.stop)
-    keyboard.add_hotkey('0', ctl.press_esc)
-
-    # ESC = выйти из программы
-    keyboard.add_hotkey('esc', ctl.exit_program)
 
     logger.info("Горячие клавиши активны:")
     logger.info("  +  -> старт")
     logger.info("  -  -> стоп")
-    logger.info("  0  -> нажать Esc в игре")
-    logger.info("  Esc -> выйти из программы")
 
     try:
         keyboard.wait()  # ждём любые события
