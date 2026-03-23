@@ -1,7 +1,9 @@
 import json
 import logging
+import sys
 import tkinter as tk
 from datetime import timedelta
+from pathlib import Path
 from tkinter import messagebox, ttk
 
 import keyboard
@@ -10,14 +12,62 @@ import main
 from license_manager import LicenseManager
 
 CONFIG_PATH = "config.json"
+DEFAULT_CONFIG = {
+    "hotkeys": {
+        "start": "+",
+        "stop": "-",
+    },
+    "sound": {
+        "enabled": True,
+        "file": "ASK.mp3",
+    },
+    "behavior": {
+        "reward_action": "take",
+        "post_cycle_reset": False,
+    },
+}
 
 logger = logging.getLogger(__name__)
 
 
+def get_config_path(path=CONFIG_PATH) -> Path:
+    if Path(path).is_absolute():
+        return Path(path)
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent / path
+    return Path(__file__).resolve().parent / path
+
+
+def merge_dict(base: dict, update: dict) -> dict:
+    result = dict(base)
+    for key, value in update.items():
+        if isinstance(value, dict) and isinstance(result.get(key), dict):
+            result[key] = merge_dict(result[key], value)
+        else:
+            result[key] = value
+    return result
+
+
 def load_config(path=CONFIG_PATH):
-    resolved = main.asset_path(path)
-    with open(resolved, "r", encoding="utf-8") as f:
-        return json.load(f)
+    config_path = get_config_path(path)
+    if not config_path.exists():
+        save_config(DEFAULT_CONFIG, path=config_path)
+        return dict(DEFAULT_CONFIG)
+
+    with open(config_path, "r", encoding="utf-8") as f:
+        loaded = json.load(f)
+
+    merged = merge_dict(DEFAULT_CONFIG, loaded if isinstance(loaded, dict) else {})
+    if merged != loaded:
+        save_config(merged, path=config_path)
+    return merged
+
+
+def save_config(cfg: dict, path=CONFIG_PATH):
+    config_path = path if isinstance(path, Path) else get_config_path(path)
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(config_path, "w", encoding="utf-8") as f:
+        json.dump(cfg, f, ensure_ascii=False, indent=2)
 
 
 class LicensePanel(ttk.LabelFrame):
@@ -143,8 +193,8 @@ class Launcher(tk.Tk):
     def __init__(self, license_manager: LicenseManager):
         super().__init__()
         self.title("Рыболовный помощник")
-        self.geometry("560x360")
-        self.minsize(540, 340)
+        self.geometry("620x460")
+        self.minsize(600, 430)
 
         self._hotkey_ids = []
         self.ctl = main.BotController()
@@ -154,6 +204,8 @@ class Launcher(tk.Tk):
         self.status_var = tk.StringVar(value="STOPPED")
         self.license_info_var = tk.StringVar(value="Лицензия: проверка...")
         self.reset_enabled_var = tk.BooleanVar(value=True)
+        self.start_hotkey_var = tk.StringVar(value="+")
+        self.stop_hotkey_var = tk.StringVar(value="-")
 
         self._configure_styles()
         self._build_ui()
@@ -221,6 +273,16 @@ class Launcher(tk.Tk):
         )
         ttk.Button(controls_row, text="STOP", command=self.on_stop).pack(side="left", fill="x", expand=True, padx=(5, 0))
 
+        hotkeys_box = ttk.LabelFrame(control_card, text="Горячие клавиши", padding=10, style="Card.TLabelframe")
+        hotkeys_box.pack(fill="x", pady=(10, 0))
+        ttk.Label(hotkeys_box, text="Старт:", style="Card.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Entry(hotkeys_box, textvariable=self.start_hotkey_var, width=14).grid(row=0, column=1, sticky="ew", padx=6)
+        ttk.Label(hotkeys_box, text="Стоп:", style="Card.TLabel").grid(row=0, column=2, sticky="w")
+        ttk.Entry(hotkeys_box, textvariable=self.stop_hotkey_var, width=14).grid(row=0, column=3, sticky="ew", padx=6)
+        ttk.Button(hotkeys_box, text="Сохранить", command=self.on_save_hotkeys).grid(row=0, column=4, sticky="e")
+        hotkeys_box.columnconfigure(1, weight=1)
+        hotkeys_box.columnconfigure(3, weight=1)
+
         modes = ttk.Frame(control_card, style="Card.TFrame")
         modes.pack(fill="x", pady=(10, 0))
         ttk.Button(modes, text="Забрать себе", command=self.ctl.set_take_mode).pack(
@@ -260,7 +322,6 @@ class Launcher(tk.Tk):
         hk = cfg.get("hotkeys", {})
         self._safe_add_hotkey(hk.get("start", "+"), self.on_start)
         self._safe_add_hotkey(hk.get("stop", "-"), self.on_stop)
-        self._safe_add_hotkey(hk.get("press_esc", "0"), self.ctl.press_esc)
 
     def _safe_add_hotkey(self, hotkey, callback):
         try:
@@ -280,6 +341,9 @@ class Launcher(tk.Tk):
     def reload_config(self):
         try:
             self.cfg = load_config()
+            hotkeys = self.cfg.get("hotkeys", {})
+            self.start_hotkey_var.set(hotkeys.get("start", "+"))
+            self.stop_hotkey_var.set(hotkeys.get("stop", "-"))
             self.apply_config_to_bot(self.cfg)
             self.setup_hotkeys(self.cfg)
         except Exception as e:
@@ -301,6 +365,27 @@ class Launcher(tk.Tk):
     def on_reload(self):
         self.reload_config()
         messagebox.showinfo("OK", "config.json перезагружен")
+
+    def on_save_hotkeys(self):
+        start_hotkey = self.start_hotkey_var.get().strip()
+        stop_hotkey = self.stop_hotkey_var.get().strip()
+
+        if not start_hotkey or not stop_hotkey:
+            messagebox.showwarning("Горячие клавиши", "Укажите обе клавиши: старт и стоп.")
+            return
+
+        self.cfg.setdefault("hotkeys", {})
+        self.cfg["hotkeys"]["start"] = start_hotkey
+        self.cfg["hotkeys"]["stop"] = stop_hotkey
+        self.cfg["hotkeys"].pop("press_esc", None)
+        self.cfg["hotkeys"].pop("exit", None)
+
+        try:
+            save_config(self.cfg)
+            self.setup_hotkeys(self.cfg)
+            messagebox.showinfo("Готово", "Горячие клавиши сохранены и применены.")
+        except Exception as e:
+            messagebox.showerror("Config error", str(e))
 
     def poll_status(self):
         self.status_var.set("RUNNING" if self.ctl.bot.bot_running else "STOPPED")

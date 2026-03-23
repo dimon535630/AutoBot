@@ -1,9 +1,7 @@
 {
   "hotkeys": {
     "start": "+",
-    "stop": "-",
-    "press_esc": "0",
-    "exit": "ctrl+shift+q"
+    "stop": "-"
   },
   "sound": {
     "enabled": true,
