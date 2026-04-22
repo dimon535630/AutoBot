@@ -50,6 +50,9 @@ class FishingBot:
         self.reset_first_click_coords = (1035, 962)
         self.reset_second_click_coords = [(1042, 748), (1034, 816)]
         self._reset_second_click_index = 0
+        self.flow_noise_threshold = 0.7
+        self.flow_resize_enabled = True
+        self.flow_resize_scale = 0.33
 
     def set_action_mode(self, mode):
         if mode not in ('take', 'release'):
@@ -131,6 +134,19 @@ class FishingBot:
         """Изменение лимита циклов для последовательности сброса."""
         self.cycle_limit = max(1, int(cycle_limit))
         print(f"Новый лимит циклов до сброса: {self.cycle_limit}")
+
+    def set_flow_noise_threshold(self, value: float):
+        self.flow_noise_threshold = max(0.05, float(value))
+        print(f"Порог шума векторного движения: {self.flow_noise_threshold:.2f}")
+
+    def set_flow_resize_enabled(self, enabled: bool):
+        self.flow_resize_enabled = bool(enabled)
+        state = "включено" if self.flow_resize_enabled else "выключено"
+        print(f"Сжатие кадра для optical flow: {state}")
+
+    def set_flow_resize_scale(self, value: float):
+        self.flow_resize_scale = min(1.0, max(0.20, float(value)))
+        print(f"Масштаб кадра для optical flow: {self.flow_resize_scale:.2f}")
 
     def find_object(self, template_path):
         """Поиск изображения на экране."""
@@ -456,7 +472,6 @@ class FishingBot:
         ad_check_timeout = 30.0
         ad_check_deadline = time.time() + ad_check_timeout
         ad_timeout_logged = False
-        flow_noise_threshold = 0.7
 
         i = 0
         check_every = 5  # проверять шаблон раз в 5 циклов (подстрой: 5/10/15/20)
@@ -486,8 +501,16 @@ class FishingBot:
 
             screenshot = ImageGrab.grab()
             screen_np = np.array(screenshot)
-            screen_resized = cv2.resize(screen_np, (640, 360))
-            screen_gray = cv2.cvtColor(screen_resized, cv2.COLOR_RGB2GRAY)
+
+            if self.flow_resize_enabled:
+                h, w = screen_np.shape[:2]
+                target_w = max(64, int(w * self.flow_resize_scale))
+                target_h = max(36, int(h * self.flow_resize_scale))
+                flow_frame = cv2.resize(screen_np, (target_w, target_h))
+            else:
+                flow_frame = screen_np
+
+            screen_gray = cv2.cvtColor(flow_frame, cv2.COLOR_RGB2GRAY)
 
             if previous_frame is None:
                 previous_frame = screen_gray
@@ -499,14 +522,14 @@ class FishingBot:
                 0.5, 3, 20, 3, 5, 1.2, 0
             )
             flow_x = np.mean(flow[..., 0])
-            if flow_x > flow_noise_threshold:
+            if flow_x > self.flow_noise_threshold:
                 if current_key != 'd':
                     if current_key:
                         pydirectinput.keyUp(current_key)
                     pydirectinput.keyDown('d')
                     current_key = 'd'
                     print("Движение вправо, зажимаем D")
-            elif flow_x < -flow_noise_threshold:
+            elif flow_x < -self.flow_noise_threshold:
                 if current_key != 'a':
                     if current_key:
                         pydirectinput.keyUp(current_key)
@@ -705,6 +728,15 @@ class BotController:
 
     def set_release_mode(self):
         self.bot.set_action_mode('release')
+
+    def set_flow_noise_threshold(self, value: float):
+        self.bot.set_flow_noise_threshold(value)
+
+    def set_flow_resize_enabled(self, enabled: bool):
+        self.bot.set_flow_resize_enabled(enabled)
+
+    def set_flow_resize_scale(self, value: float):
+        self.bot.set_flow_resize_scale(value)
 
     def exit_program(self):
         print("Выход: останавливаем бота и закрываем программу...")
