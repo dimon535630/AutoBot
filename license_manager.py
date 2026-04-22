@@ -2,13 +2,14 @@ import hashlib
 import re
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-# Формат: FBOT-<7|14|30>-<B5>-<B8>-<B3>-<B9>-<checksum>
+# Формат ключа: FBOT-<TYPE>-<B5>-<B8>-<B3>-<B9>-<checksum>
+# TYPE теперь не влияет на срок, лицензия бессрочная после активации.
 # B5/B8/B3/B9 — 4 цифры с проверкой кратности на 5/8/3/9 соответственно.
-KEY_PATTERN = re.compile(r"^FBOT-(7|14|30)-(\d{4})-(\d{4})-(\d{4})-(\d{4})-([A-F0-9]{2})$")
+KEY_PATTERN = re.compile(r"^FBOT-([A-Z0-9]{2,8})-(\d{4})-(\d{4})-(\d{4})-(\d{4})-([A-F0-9]{2})$")
 
 
 @dataclass
@@ -62,13 +63,12 @@ class LicenseManager:
     def _key_hash(self, key_value: str) -> str:
         return hashlib.sha256(key_value.encode("utf-8")).hexdigest().upper()
 
-    def validate_key_format(self, key_value: str) -> int:
+    def validate_key_format(self, key_value: str) -> None:
         key_value = key_value.strip().upper()
         match = KEY_PATTERN.match(key_value)
         if not match:
             raise ValueError("Неверный формат ключа")
 
-        duration = int(match.group(1))
         blocks = [int(match.group(2)), int(match.group(3)), int(match.group(4)), int(match.group(5))]
         checksum = match.group(6)
 
@@ -81,15 +81,15 @@ class LicenseManager:
         if self._checksum(base) != checksum:
             raise ValueError("Неверная контрольная сумма ключа")
 
-        return duration
+        return None
 
     def activate_with_key(self, key_value: str) -> LicenseStatus:
         key_value = key_value.strip().upper()
-        duration = self.validate_key_format(key_value)
+        self.validate_key_format(key_value)
         key_hash = self._key_hash(key_value)
 
         now = datetime.utcnow()
-        expires_at = now + timedelta(days=duration)
+        expires_at = None
 
         with self._connect() as conn:
             used = conn.execute("SELECT 1 FROM used_keys WHERE key_hash = ?", (key_hash,)).fetchone()
@@ -106,20 +106,20 @@ class LicenseManager:
                 SET active_key = ?, activated_at = ?, expires_at = ?
                 WHERE id = 1
                 """,
-                (key_value, now.isoformat(), expires_at.isoformat()),
+                (key_value, now.isoformat(), None),
             )
 
-        return LicenseStatus(True, key_value, expires_at)
+        return LicenseStatus(True, key_value, None)
 
     def get_status(self) -> LicenseStatus:
         with self._connect() as conn:
             row = conn.execute("SELECT active_key, expires_at FROM license_state WHERE id = 1").fetchone()
 
-        if not row or not row["active_key"] or not row["expires_at"]:
+        if not row or not row["active_key"]:
             return LicenseStatus(False, None, None)
 
-        expires_at = datetime.fromisoformat(row["expires_at"])
-        if datetime.utcnow() >= expires_at:
+        expires_at = datetime.fromisoformat(row["expires_at"]) if row["expires_at"] else None
+        if expires_at and datetime.utcnow() >= expires_at:
             self.deactivate()
             return LicenseStatus(False, None, None)
 

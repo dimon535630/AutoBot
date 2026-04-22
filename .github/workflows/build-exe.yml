@@ -1,0 +1,56 @@
+name: Build Windows EXE
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build EXE
+        shell: pwsh
+        run: |
+          pyinstaller --noconfirm --clean --windowed --onefile --name FishingBot `
+            --add-data "ASK.mp3;." `
+            --add-data "AD.png;." `
+            --add-data "EZEFISH.jpg;." `
+            --add-data "q11.png;." `
+            --add-data "q12.png;." `
+            --add-data "1.png;." `
+            --add-data "otpustit.png;." `
+            --add-data "stop.png;." `
+            --add-data "knopkasebe.jpg;." `
+            --add-data "config.json;." `
+            --add-data "licenses.db;." `
+            launcher.py
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: FishingBot-windows-exe
+          path: dist/FishingBot.exe
+          if-no-files-found: error
+
+      - name: Upload release asset
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/FishingBot.exe

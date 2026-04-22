@@ -51,9 +51,12 @@ class LicensePanel(ttk.LabelFrame):
 
     def refresh_status(self):
         status = self.license_manager.get_status()
-        if status.is_active and status.expires_at:
-            left = timedelta(seconds=status.seconds_left)
-            self.status_var.set(f"Активен ключ: {status.key_value} | осталось: {left}")
+        if status.is_active:
+            if status.expires_at:
+                left = timedelta(seconds=status.seconds_left)
+                self.status_var.set(f"Активен ключ: {status.key_value} | осталось: {left}")
+            else:
+                self.status_var.set(f"Активен ключ: {status.key_value} | полный доступ")
         else:
             self.status_var.set("Лицензия не активна")
         self.on_status_change(status.is_active)
@@ -139,8 +142,8 @@ class Launcher(tk.Tk):
     def __init__(self, license_manager: LicenseManager):
         super().__init__()
         self.title("Рыболовный помощник")
-        self.geometry("560x360")
-        self.minsize(540, 340)
+        self.geometry("620x520")
+        self.minsize(580, 500)
 
         self._hotkey_ids = []
         self.ctl = main.BotController()
@@ -150,6 +153,9 @@ class Launcher(tk.Tk):
         self.status_var = tk.StringVar(value="STOPPED")
         self.license_info_var = tk.StringVar(value="Лицензия: проверка...")
         self.reset_enabled_var = tk.BooleanVar(value=True)
+        self.flow_noise_var = tk.DoubleVar(value=0.7)
+        self.flow_resize_enabled_var = tk.BooleanVar(value=True)
+        self.flow_resize_scale_var = tk.DoubleVar(value=0.33)
 
         self._configure_styles()
         self._build_ui()
@@ -235,6 +241,40 @@ class Launcher(tk.Tk):
             command=self.sync_reset_options,
         ).pack(anchor="w")
 
+        flow_box = ttk.LabelFrame(root, text="Векторное движение (optical flow)", padding=12, style="Card.TLabelframe")
+        flow_box.pack(fill="x", pady=(0, 10))
+
+        ttk.Label(flow_box, text="Порог шума движения", style="Card.TLabel").pack(anchor="w")
+        self.flow_noise_scale = ttk.Scale(
+            flow_box,
+            from_=0.1,
+            to=2.0,
+            variable=self.flow_noise_var,
+            command=self.on_flow_noise_change,
+        )
+        self.flow_noise_scale.pack(fill="x", pady=(2, 6))
+        self.flow_noise_value_label = ttk.Label(flow_box, text="0.70", style="Hint.TLabel")
+        self.flow_noise_value_label.pack(anchor="e")
+
+        ttk.Checkbutton(
+            flow_box,
+            text="Сжимать кадр перед анализом (ускоряет работу)",
+            variable=self.flow_resize_enabled_var,
+            command=self.on_flow_resize_toggle,
+        ).pack(anchor="w", pady=(6, 2))
+
+        ttk.Label(flow_box, text="Масштаб кадра", style="Card.TLabel").pack(anchor="w")
+        self.flow_resize_scale = ttk.Scale(
+            flow_box,
+            from_=0.20,
+            to=1.0,
+            variable=self.flow_resize_scale_var,
+            command=self.on_flow_resize_scale_change,
+        )
+        self.flow_resize_scale.pack(fill="x", pady=(2, 6))
+        self.flow_resize_value_label = ttk.Label(flow_box, text="0.33", style="Hint.TLabel")
+        self.flow_resize_value_label.pack(anchor="e")
+
         ttk.Button(root, text="Reload config.json", command=self.on_reload).pack(fill="x", pady=(0, 10))
 
     def apply_config_to_bot(self, cfg: dict):
@@ -250,6 +290,37 @@ class Launcher(tk.Tk):
             self.ctl.set_release_mode()
         else:
             self.ctl.set_take_mode()
+
+        flow_noise = float(behavior.get("flow_noise_threshold", 0.7))
+        flow_resize_enabled = bool(behavior.get("flow_resize_enabled", True))
+        flow_resize_scale = float(behavior.get("flow_resize_scale", 0.33))
+
+        self.flow_noise_var.set(flow_noise)
+        self.flow_resize_enabled_var.set(flow_resize_enabled)
+        self.flow_resize_scale_var.set(flow_resize_scale)
+
+        self.ctl.set_flow_noise_threshold(flow_noise)
+        self.ctl.set_flow_resize_enabled(flow_resize_enabled)
+        self.ctl.set_flow_resize_scale(flow_resize_scale)
+
+        self._refresh_flow_labels()
+
+    def _refresh_flow_labels(self):
+        self.flow_noise_value_label.configure(text=f"{self.flow_noise_var.get():.2f}")
+        self.flow_resize_value_label.configure(text=f"{self.flow_resize_scale_var.get():.2f}")
+
+    def on_flow_noise_change(self, _value=None):
+        value = float(self.flow_noise_var.get())
+        self.ctl.set_flow_noise_threshold(value)
+        self._refresh_flow_labels()
+
+    def on_flow_resize_toggle(self):
+        self.ctl.set_flow_resize_enabled(self.flow_resize_enabled_var.get())
+
+    def on_flow_resize_scale_change(self, _value=None):
+        value = float(self.flow_resize_scale_var.get())
+        self.ctl.set_flow_resize_scale(value)
+        self._refresh_flow_labels()
 
     def setup_hotkeys(self, cfg: dict):
         self._clear_hotkeys()
@@ -304,9 +375,12 @@ class Launcher(tk.Tk):
 
     def poll_license(self):
         status = self.license_manager.get_status()
-        if status.is_active and status.expires_at:
-            left = timedelta(seconds=status.seconds_left)
-            self.license_info_var.set(f"Лицензия активна, осталось: {left}")
+        if status.is_active:
+            if status.expires_at:
+                left = timedelta(seconds=status.seconds_left)
+                self.license_info_var.set(f"Лицензия активна, осталось: {left}")
+            else:
+                self.license_info_var.set("Лицензия активна: полный доступ")
         else:
             self.license_info_var.set("Лицензия неактивна")
 
