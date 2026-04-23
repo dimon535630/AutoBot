@@ -1,6 +1,9 @@
 import functools
+import random
 import threading
 import time
+from pathlib import Path
+import sys
 import cv2
 import keyboard
 import numpy as np
@@ -10,7 +13,20 @@ import pygame
 from PIL import ImageGrab
 
 # Пути к файлам
-sound_file_path = 'ASK.mp3'
+
+
+def get_runtime_base_dir() -> Path:
+    if getattr(sys, 'frozen', False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent
+
+
+def asset_path(filename: str) -> str:
+    assets_dir = get_runtime_base_dir() / 'assets'
+    return str((assets_dir / filename).resolve())
+
+
+sound_file_path = asset_path('ASK.mp3')
 
 # Инициализация звука (если не получится — просто отключим звук)
 SOUND_ENABLED = True
@@ -40,7 +56,7 @@ def prevent_reentry(method):
 class FishingBot:
     def __init__(self):
         self.bot_running = False
-        self.reward_button_template = 'knopkasebe.jpg'
+        self.reward_button_template = asset_path('knopkasebe.jpg')
         self.reward_button_name = "Забрать себе"
         self.post_cycle_reset_enabled = True
         self.cycle_limit = 7
@@ -49,7 +65,11 @@ class FishingBot:
         self.action_mode = 'take'  # take | release
         self.reset_first_click_coords = (1035, 962)
         self.reset_second_click_coords = [(1042, 748), (1034, 816)]
-        self._reset_second_click_index = 0
+        self.flow_noise_threshold = 0.7
+        self.flow_resize_enabled = True
+        self.flow_resize_scale = 0.33
+        self.lead_base_px = 9
+        self.lead_max_px = 50
 
     def set_action_mode(self, mode):
         if mode not in ('take', 'release'):
@@ -113,8 +133,8 @@ class FishingBot:
     def set_reward_action(self, action: str):
         """Выбор кнопки после мини-игр: забрать себе / отпустить."""
         actions = {
-            "take": ('knopkasebe.jpg', "Забрать себе"),
-            "release": ('otpustit.png', "Отпустить"),
+            "take": (asset_path('knopkasebe.jpg'), "Забрать себе"),
+            "release": (asset_path('otpustit.png'), "Отпустить"),
         }
         template, name = actions.get(action, actions["take"])
         self.reward_button_template = template
@@ -131,6 +151,29 @@ class FishingBot:
         """Изменение лимита циклов для последовательности сброса."""
         self.cycle_limit = max(1, int(cycle_limit))
         print(f"Новый лимит циклов до сброса: {self.cycle_limit}")
+
+    def set_flow_noise_threshold(self, value: float):
+        self.flow_noise_threshold = max(0.05, float(value))
+        print(f"Порог шума векторного движения: {self.flow_noise_threshold:.2f}")
+
+    def set_flow_resize_enabled(self, enabled: bool):
+        self.flow_resize_enabled = bool(enabled)
+        state = "включено" if self.flow_resize_enabled else "выключено"
+        print(f"Сжатие кадра для optical flow: {state}")
+
+    def set_flow_resize_scale(self, value: float):
+        self.flow_resize_scale = min(1.0, max(0.20, float(value)))
+        print(f"Масштаб кадра для optical flow: {self.flow_resize_scale:.2f}")
+
+    def set_lead_base_px(self, value: float):
+        self.lead_base_px = max(1, int(value))
+        if self.lead_max_px < self.lead_base_px:
+            self.lead_max_px = self.lead_base_px
+        print(f"Базовое опережение lead_base_px: {self.lead_base_px}")
+
+    def set_lead_max_px(self, value: float):
+        self.lead_max_px = max(self.lead_base_px, int(value))
+        print(f"Максимальное опережение lead_max_px: {self.lead_max_px}")
 
     def find_object(self, template_path):
         """Поиск изображения на экране."""
@@ -153,6 +196,19 @@ class FishingBot:
         if not shape or len(shape) < 2:
             return None
         return int(shape[0]), int(shape[1])
+
+    def _calc_dynamic_lead_px(self, velocity: int, lead_base_px: int, lead_max_px: int) -> int:
+        """Автоподстройка лид-пикселей по скорости ползунка."""
+        speed = abs(int(velocity))
+
+        if speed <= 2:
+            lead_px = lead_base_px + speed
+        elif speed <= 6:
+            lead_px = lead_base_px + speed * 2
+        else:
+            lead_px = lead_base_px + speed * 3
+
+        return min(lead_max_px, lead_px)
 
     def find_image_on_screen(self, template_path, threshold=0.8, use_blur=False):
         """Универсальный поиск с опциональным размытием."""
@@ -294,12 +350,12 @@ class FishingBot:
 
         ROI = (679, 878, 1243, 916)  # left, top, right, bottom
         # Чем больше скорость ползунка, тем раньше нажимаем.
-        lead_base_px = 9
-        lead_max_px = 36
+        lead_base_px = self.lead_base_px
+        lead_max_px = self.lead_max_px
         previous_slider_center = None
 
         while self.bot_running:
-            if self.stop_bot_on_image('stop.png'):
+            if self.stop_bot_on_image(asset_path('stop.png')):
                 return True
 
             screenshot = np.array(ImageGrab.grab())  # RGB
@@ -339,7 +395,7 @@ class FishingBot:
                     velocity = slider_center - previous_slider_center
 
                 # Раннее нажатие: чем быстрее ползунок, тем раньше срабатывание.
-                lead_px = min(lead_max_px, lead_base_px + abs(velocity) * 2)
+                lead_px = self._calc_dynamic_lead_px(velocity, lead_base_px, lead_max_px)
 
                 # Если уже в зоне — жмём сразу.
                 #if green_left <= slider_center <= green_right:
@@ -365,8 +421,8 @@ class FishingBot:
     @prevent_reentry
     def second_mini_game(self, show_roi=False):
         bubbles_images = [
-            cv2.imread('q11.png', cv2.IMREAD_GRAYSCALE),
-            cv2.imread('q12.png', cv2.IMREAD_GRAYSCALE),
+            cv2.imread(asset_path('q11.png'), cv2.IMREAD_GRAYSCALE),
+            cv2.imread(asset_path('q12.png'), cv2.IMREAD_GRAYSCALE),
         ]
 
         if any(img is None for img in bubbles_images):
@@ -450,21 +506,20 @@ class FishingBot:
         previous_frame = None
         current_key = None
 
-        finish_template = 'EZEFISH.jpg' if self.action_mode == 'take' else 'otpustit.png'
+        finish_template = asset_path('EZEFISH.jpg') if self.action_mode == 'take' else asset_path('otpustit.png')
         ad_bbox = (837, 1016, 912, 1057)
         ad_seen_in_roi = False
         ad_check_timeout = 30.0
         ad_check_deadline = time.time() + ad_check_timeout
         ad_timeout_logged = False
-        flow_noise_threshold = 0.7
 
         i = 0
         check_every = 5  # проверять шаблон раз в 5 циклов (подстрой: 5/10/15/20)
         while self.bot_running:
-            if self.stop_bot_on_image('stop.png'):
+            if self.stop_bot_on_image(asset_path('stop.png')):
                 return False
 
-            ad_present = self._template_in_region('AD.png', bbox=ad_bbox, threshold=0.85)
+            ad_present = self._template_in_region(asset_path('AD.png'), bbox=ad_bbox, threshold=0.85)
             if ad_present:
                 ad_seen_in_roi = True
             elif ad_seen_in_roi:
@@ -486,8 +541,16 @@ class FishingBot:
 
             screenshot = ImageGrab.grab()
             screen_np = np.array(screenshot)
-            screen_resized = cv2.resize(screen_np, (640, 360))
-            screen_gray = cv2.cvtColor(screen_resized, cv2.COLOR_RGB2GRAY)
+
+            if self.flow_resize_enabled:
+                h, w = screen_np.shape[:2]
+                target_w = max(64, int(w * self.flow_resize_scale))
+                target_h = max(36, int(h * self.flow_resize_scale))
+                flow_frame = cv2.resize(screen_np, (target_w, target_h))
+            else:
+                flow_frame = screen_np
+
+            screen_gray = cv2.cvtColor(flow_frame, cv2.COLOR_RGB2GRAY)
 
             if previous_frame is None:
                 previous_frame = screen_gray
@@ -499,14 +562,14 @@ class FishingBot:
                 0.5, 3, 20, 3, 5, 1.2, 0
             )
             flow_x = np.mean(flow[..., 0])
-            if flow_x > flow_noise_threshold:
+            if flow_x > self.flow_noise_threshold:
                 if current_key != 'd':
                     if current_key:
                         pydirectinput.keyUp(current_key)
                     pydirectinput.keyDown('d')
                     current_key = 'd'
                     print("Движение вправо, зажимаем D")
-            elif flow_x < -flow_noise_threshold:
+            elif flow_x < -self.flow_noise_threshold:
                 if current_key != 'a':
                     if current_key:
                         pydirectinput.keyUp(current_key)
@@ -527,7 +590,7 @@ class FishingBot:
 
     def press_action_button(self, timeout=3.0, poll=1):
         """Нажатие кнопки действия в зависимости от режима (забрать/отпустить)."""
-        template_path = 'knopkasebe.jpg' if self.action_mode == 'take' else 'otpustit.png'
+        template_path = asset_path('knopkasebe.jpg') if self.action_mode == 'take' else asset_path('otpustit.png')
         button_name = "'Забрать себе'" if self.action_mode == 'take' else "'Отпустить'"
         start = time.time()
 
@@ -587,10 +650,10 @@ class FishingBot:
 
         print(
             f"Достигнут лимит {self.cycle_limit} циклов. "
-            f"Выполняем ESC(2с) -> CLICK1(6с) -> CLICK2(6с, чередование) -> E(6с)."
+            f"Выполняем ESC(2с) -> CLICK1(6с) -> CLICK2(6с, рандом) -> E(6с)."
         )
 
-        second_click_coords = self.reset_second_click_coords[self._reset_second_click_index]
+        second_click_coords = random.choice(self.reset_second_click_coords)
         steps = [
             (2, 'key', 'esc'),
             (6, 'click', self.reset_first_click_coords),
@@ -612,7 +675,6 @@ class FishingBot:
                 pyautogui.click(x=x, y=y)
                 print(f"Сделан клик мышью в ({x}, {y}) (после {wait_seconds}с)")
 
-            self._reset_second_click_index = (self._reset_second_click_index + 1) % len(self.reset_second_click_coords)
 
 
     @prevent_reentry
@@ -705,6 +767,21 @@ class BotController:
 
     def set_release_mode(self):
         self.bot.set_action_mode('release')
+
+    def set_flow_noise_threshold(self, value: float):
+        self.bot.set_flow_noise_threshold(value)
+
+    def set_flow_resize_enabled(self, enabled: bool):
+        self.bot.set_flow_resize_enabled(enabled)
+
+    def set_flow_resize_scale(self, value: float):
+        self.bot.set_flow_resize_scale(value)
+
+    def set_lead_base_px(self, value: float):
+        self.bot.set_lead_base_px(value)
+
+    def set_lead_max_px(self, value: float):
+        self.bot.set_lead_max_px(value)
 
     def exit_program(self):
         print("Выход: останавливаем бота и закрываем программу...")

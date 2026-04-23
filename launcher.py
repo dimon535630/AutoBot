@@ -1,6 +1,8 @@
 import json
 import tkinter as tk
 from datetime import timedelta
+from pathlib import Path
+import sys
 from tkinter import messagebox, ttk
 
 import keyboard
@@ -8,12 +10,32 @@ import keyboard
 import main
 from license_manager import LicenseManager
 
-CONFIG_PATH = "config.json"
+def get_runtime_base_dir() -> Path:
+    if getattr(sys, 'frozen', False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent
+
+
+def get_config_path() -> str:
+    return str((get_runtime_base_dir() / "config.json").resolve())
+
+
+def asset_path(filename: str) -> str:
+    return str((get_runtime_base_dir() / "assets" / filename).resolve())
+
+
+CONFIG_PATH = get_config_path()
 
 
 def load_config(path=CONFIG_PATH):
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
+
+
+def save_config(cfg: dict, path=CONFIG_PATH):
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(cfg, f, ensure_ascii=False, indent=2)
+        f.write("\n")
 
 
 class LicensePanel(ttk.LabelFrame):
@@ -51,9 +73,12 @@ class LicensePanel(ttk.LabelFrame):
 
     def refresh_status(self):
         status = self.license_manager.get_status()
-        if status.is_active and status.expires_at:
-            left = timedelta(seconds=status.seconds_left)
-            self.status_var.set(f"Активен ключ: {status.key_value} | осталось: {left}")
+        if status.is_active:
+            if status.expires_at:
+                left = timedelta(seconds=status.seconds_left)
+                self.status_var.set(f"Активен ключ: {status.key_value} | осталось: {left}")
+            else:
+                self.status_var.set(f"Активен ключ: {status.key_value} | полный доступ")
         else:
             self.status_var.set("Лицензия не активна")
         self.on_status_change(status.is_active)
@@ -91,10 +116,10 @@ class LicenseActivationWindow(tk.Tk):
         if "clam" in style.theme_names():
             style.theme_use("clam")
 
-        bg_main = "#0f131c"
-        bg_card = "#171e2a"
-        fg_primary = "#e7edf9"
-        fg_secondary = "#a8b3c6"
+        bg_main = "#101317"
+        bg_card = "#171b22"
+        fg_primary = "#f5f7fa"
+        fg_secondary = "#96a0ad"
 
         self.configure(bg=bg_main)
 
@@ -139,8 +164,8 @@ class Launcher(tk.Tk):
     def __init__(self, license_manager: LicenseManager):
         super().__init__()
         self.title("Рыболовный помощник")
-        self.geometry("560x360")
-        self.minsize(540, 340)
+        self.geometry("640x560")
+        self.minsize(620, 540)
 
         self._hotkey_ids = []
         self.ctl = main.BotController()
@@ -150,11 +175,17 @@ class Launcher(tk.Tk):
         self.status_var = tk.StringVar(value="STOPPED")
         self.license_info_var = tk.StringVar(value="Лицензия: проверка...")
         self.reset_enabled_var = tk.BooleanVar(value=True)
+        self.flow_noise_var = tk.DoubleVar(value=0.7)
+        self.flow_resize_enabled_var = tk.BooleanVar(value=True)
+        self.flow_resize_scale_var = tk.DoubleVar(value=0.33)
+        self.lead_base_var = tk.DoubleVar(value=9)
+        self.lead_max_var = tk.DoubleVar(value=50)
 
         self._configure_styles()
         self._build_ui()
         self.protocol("WM_DELETE_WINDOW", self.on_close)
 
+        self._show_startup_loader()
         self.reload_config()
         self.sync_reset_options()
 
@@ -162,15 +193,34 @@ class Launcher(tk.Tk):
         self.after(1000, self.poll_license)
 
 
+    def _show_startup_loader(self):
+        self.withdraw()
+        splash = tk.Toplevel(self)
+        splash.overrideredirect(True)
+        splash.configure(bg="#101317")
+        splash.geometry("360x120+500+300")
+
+        ttk.Label(splash, text="FishingBot", style="Header.TLabel").pack(pady=(16, 6))
+        pb = ttk.Progressbar(splash, mode="indeterminate", length=260)
+        pb.pack(pady=(4, 12))
+        pb.start(10)
+
+        def _finish():
+            pb.stop()
+            splash.destroy()
+            self.deiconify()
+
+        self.after(900, _finish)
+
     def _configure_styles(self):
         style = ttk.Style(self)
         if "clam" in style.theme_names():
             style.theme_use("clam")
 
-        bg_main = "#0f131c"
-        bg_card = "#171e2a"
-        fg_primary = "#e7edf9"
-        fg_secondary = "#a8b3c6"
+        bg_main = "#101317"
+        bg_card = "#171b22"
+        fg_primary = "#f5f7fa"
+        fg_secondary = "#96a0ad"
 
         self.configure(bg=bg_main)
 
@@ -235,12 +285,55 @@ class Launcher(tk.Tk):
             command=self.sync_reset_options,
         ).pack(anchor="w")
 
-        ttk.Button(root, text="Reload config.json", command=self.on_reload).pack(fill="x", pady=(0, 10))
+        flow_box = ttk.LabelFrame(root, text="Векторное движение (optical flow)", padding=12, style="Card.TLabelframe")
+        flow_box.pack(fill="x", pady=(0, 10))
+
+        ttk.Label(flow_box, text="Порог шума движения", style="Card.TLabel").pack(anchor="w")
+        self.flow_noise_scale = ttk.Scale(
+            flow_box,
+            from_=0.1,
+            to=2.0,
+            variable=self.flow_noise_var,
+            command=self.on_flow_noise_change,
+        )
+        self.flow_noise_scale.pack(fill="x", pady=(2, 6))
+        self.flow_noise_value_label = ttk.Label(flow_box, text="0.70", style="Hint.TLabel")
+        self.flow_noise_value_label.pack(anchor="e")
+
+        ttk.Checkbutton(
+            flow_box,
+            text="Сжимать кадр перед анализом (ускоряет работу)",
+            variable=self.flow_resize_enabled_var,
+            command=self.on_flow_resize_toggle,
+        ).pack(anchor="w", pady=(6, 2))
+
+        ttk.Label(flow_box, text="Масштаб кадра", style="Card.TLabel").pack(anchor="w")
+        self.flow_resize_scale = ttk.Scale(
+            flow_box,
+            from_=0.20,
+            to=1.0,
+            variable=self.flow_resize_scale_var,
+            command=self.on_flow_resize_scale_change,
+        )
+        self.flow_resize_scale.pack(fill="x", pady=(2, 6))
+        self.flow_resize_value_label = ttk.Label(flow_box, text="0.33", style="Hint.TLabel")
+        self.flow_resize_value_label.pack(anchor="e")
+
+        ttk.Label(flow_box, text="lead_base_px", style="Card.TLabel").pack(anchor="w", pady=(6, 0))
+        ttk.Scale(flow_box, from_=1, to=30, variable=self.lead_base_var, command=self.on_lead_base_change).pack(fill="x")
+
+        ttk.Label(flow_box, text="lead_max_px", style="Card.TLabel").pack(anchor="w", pady=(6, 0))
+        ttk.Scale(flow_box, from_=20, to=120, variable=self.lead_max_var, command=self.on_lead_max_change).pack(fill="x")
+
+        actions = ttk.Frame(root, style="Main.TFrame")
+        actions.pack(fill="x", pady=(0, 10))
+        ttk.Button(actions, text="Сохранить настройки", command=self.on_save_config, style="Accent.TButton").pack(side="left", fill="x", expand=True, padx=(0, 6))
+        ttk.Button(actions, text="Reload config.json", command=self.on_reload).pack(side="left", fill="x", expand=True)
 
     def apply_config_to_bot(self, cfg: dict):
         sound = cfg.get("sound", {})
         if "file" in sound:
-            main.sound_file_path = sound["file"]
+            main.sound_file_path = asset_path(sound["file"])
         if "enabled" in sound:
             main.SOUND_ENABLED = bool(sound["enabled"])
 
@@ -250,6 +343,59 @@ class Launcher(tk.Tk):
             self.ctl.set_release_mode()
         else:
             self.ctl.set_take_mode()
+
+        flow_noise = float(behavior.get("flow_noise_threshold", 0.7))
+        flow_resize_enabled = bool(behavior.get("flow_resize_enabled", True))
+        flow_resize_scale = float(behavior.get("flow_resize_scale", 0.33))
+        lead_base_px = float(behavior.get("lead_base_px", 9))
+        lead_max_px = float(behavior.get("lead_max_px", 50))
+
+        self.flow_noise_var.set(flow_noise)
+        self.flow_resize_enabled_var.set(flow_resize_enabled)
+        self.flow_resize_scale_var.set(flow_resize_scale)
+        self.lead_base_var.set(lead_base_px)
+        self.lead_max_var.set(lead_max_px)
+
+        self.ctl.set_flow_noise_threshold(flow_noise)
+        self.ctl.set_flow_resize_enabled(flow_resize_enabled)
+        self.ctl.set_flow_resize_scale(flow_resize_scale)
+        self.ctl.set_lead_base_px(lead_base_px)
+        self.ctl.set_lead_max_px(lead_max_px)
+
+        self._refresh_flow_labels()
+
+    def _refresh_flow_labels(self):
+        self.flow_noise_value_label.configure(text=f"{self.flow_noise_var.get():.2f}")
+        self.flow_resize_value_label.configure(text=f"{self.flow_resize_scale_var.get():.2f}")
+
+    def on_flow_noise_change(self, _value=None):
+        value = float(self.flow_noise_var.get())
+        self.ctl.set_flow_noise_threshold(value)
+        self._refresh_flow_labels()
+
+    def on_flow_resize_toggle(self):
+        self.ctl.set_flow_resize_enabled(self.flow_resize_enabled_var.get())
+
+    def on_flow_resize_scale_change(self, _value=None):
+        value = float(self.flow_resize_scale_var.get())
+        self.ctl.set_flow_resize_scale(value)
+        self._refresh_flow_labels()
+
+    def on_lead_base_change(self, _value=None):
+        self.ctl.set_lead_base_px(self.lead_base_var.get())
+
+    def on_lead_max_change(self, _value=None):
+        self.ctl.set_lead_max_px(self.lead_max_var.get())
+
+    def on_save_config(self):
+        behavior = self.cfg.setdefault("behavior", {})
+        behavior["flow_noise_threshold"] = round(float(self.flow_noise_var.get()), 3)
+        behavior["flow_resize_enabled"] = bool(self.flow_resize_enabled_var.get())
+        behavior["flow_resize_scale"] = round(float(self.flow_resize_scale_var.get()), 3)
+        behavior["lead_base_px"] = int(self.lead_base_var.get())
+        behavior["lead_max_px"] = int(self.lead_max_var.get())
+        save_config(self.cfg)
+        messagebox.showinfo("OK", "Настройки сохранены")
 
     def setup_hotkeys(self, cfg: dict):
         self._clear_hotkeys()
@@ -304,9 +450,12 @@ class Launcher(tk.Tk):
 
     def poll_license(self):
         status = self.license_manager.get_status()
-        if status.is_active and status.expires_at:
-            left = timedelta(seconds=status.seconds_left)
-            self.license_info_var.set(f"Лицензия активна, осталось: {left}")
+        if status.is_active:
+            if status.expires_at:
+                left = timedelta(seconds=status.seconds_left)
+                self.license_info_var.set(f"Лицензия активна, осталось: {left}")
+            else:
+                self.license_info_var.set("Лицензия активна: полный доступ")
         else:
             self.license_info_var.set("Лицензия неактивна")
 
@@ -326,7 +475,7 @@ class Launcher(tk.Tk):
 
 
 if __name__ == "__main__":
-    manager = LicenseManager()
+    manager = LicenseManager(str((get_runtime_base_dir() / "licenses.db").resolve()))
     status = manager.get_status()
 
     if not status.is_active:

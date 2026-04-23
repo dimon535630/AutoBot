@@ -11,6 +11,11 @@
   },
   "behavior": {
     "reward_action": "take",
-    "post_cycle_reset": false
+    "post_cycle_reset": false,
+    "flow_noise_threshold": 0.7,
+    "flow_resize_enabled": true,
+    "flow_resize_scale": 0.33,
+    "lead_base_px": 9,
+    "lead_max_px": 50
   }
 }
