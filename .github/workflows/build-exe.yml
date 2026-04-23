@@ -1,0 +1,62 @@
+name: Build Windows EXE
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller pyinstaller-hooks-contrib
+
+      - name: Build EXE (modules/plugins inside)
+        run: python build_exe.py
+
+      - name: Prepare distributable folder (assets external)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path package/assets -Force | Out-Null
+          Copy-Item dist/FishingBot.exe package/FishingBot.exe -Force
+
+          $assetExt = @('*.png','*.jpg','*.jpeg','*.mp3')
+          foreach ($pattern in $assetExt) {
+            Get-ChildItem -Path . -File -Filter $pattern | ForEach-Object {
+              Copy-Item $_.FullName package/assets/ -Force
+            }
+          }
+
+          if (Test-Path config.json) { Copy-Item config.json package/config.json -Force }
+          if (Test-Path licenses.db) { Copy-Item licenses.db package/licenses.db -Force }
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: FishingBot-windows-package
+          path: package/
+          if-no-files-found: error
+
+      - name: Upload release asset
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            package/FishingBot.exe
+            package/config.json
+            package/licenses.db
+            package/assets/*

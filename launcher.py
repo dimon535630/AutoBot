@@ -1,6 +1,8 @@
 import json
 import tkinter as tk
 from datetime import timedelta
+from pathlib import Path
+import sys
 from tkinter import messagebox, ttk
 
 import keyboard
@@ -8,7 +10,21 @@ import keyboard
 import main
 from license_manager import LicenseManager
 
-CONFIG_PATH = "config.json"
+def get_runtime_base_dir() -> Path:
+    if getattr(sys, 'frozen', False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent
+
+
+def get_config_path() -> str:
+    return str((get_runtime_base_dir() / "config.json").resolve())
+
+
+def asset_path(filename: str) -> str:
+    return str((get_runtime_base_dir() / "assets" / filename).resolve())
+
+
+CONFIG_PATH = get_config_path()
 
 
 def load_config(path=CONFIG_PATH):
@@ -51,9 +67,12 @@ class LicensePanel(ttk.LabelFrame):
 
     def refresh_status(self):
         status = self.license_manager.get_status()
-        if status.is_active and status.expires_at:
-            left = timedelta(seconds=status.seconds_left)
-            self.status_var.set(f"Активен ключ: {status.key_value} | осталось: {left}")
+        if status.is_active:
+            if status.expires_at:
+                left = timedelta(seconds=status.seconds_left)
+                self.status_var.set(f"Активен ключ: {status.key_value} | осталось: {left}")
+            else:
+                self.status_var.set(f"Активен ключ: {status.key_value} | полный доступ")
         else:
             self.status_var.set("Лицензия не активна")
         self.on_status_change(status.is_active)
@@ -139,8 +158,8 @@ class Launcher(tk.Tk):
     def __init__(self, license_manager: LicenseManager):
         super().__init__()
         self.title("Рыболовный помощник")
-        self.geometry("560x360")
-        self.minsize(540, 340)
+        self.geometry("680x700")
+        self.minsize(640, 660)
 
         self._hotkey_ids = []
         self.ctl = main.BotController()
@@ -150,6 +169,14 @@ class Launcher(tk.Tk):
         self.status_var = tk.StringVar(value="STOPPED")
         self.license_info_var = tk.StringVar(value="Лицензия: проверка...")
         self.reset_enabled_var = tk.BooleanVar(value=True)
+        self.flow_noise_var = tk.DoubleVar(value=0.7)
+        self.flow_resize_enabled_var = tk.BooleanVar(value=True)
+        self.flow_resize_scale_var = tk.DoubleVar(value=0.33)
+        self.green_min_area_var = tk.DoubleVar(value=264)
+        self.slider_s_max_var = tk.DoubleVar(value=30)
+        self.slider_v_min_var = tk.DoubleVar(value=216)
+        self.slider_min_area_var = tk.DoubleVar(value=30)
+        self.space_trigger_threshold_var = tk.DoubleVar(value=8)
 
         self._configure_styles()
         self._build_ui()
@@ -235,12 +262,64 @@ class Launcher(tk.Tk):
             command=self.sync_reset_options,
         ).pack(anchor="w")
 
+        flow_box = ttk.LabelFrame(root, text="Векторное движение (optical flow)", padding=12, style="Card.TLabelframe")
+        flow_box.pack(fill="x", pady=(0, 10))
+
+        ttk.Label(flow_box, text="Порог шума движения", style="Card.TLabel").pack(anchor="w")
+        self.flow_noise_scale = ttk.Scale(
+            flow_box,
+            from_=0.1,
+            to=2.0,
+            variable=self.flow_noise_var,
+            command=self.on_flow_noise_change,
+        )
+        self.flow_noise_scale.pack(fill="x", pady=(2, 6))
+        self.flow_noise_value_label = ttk.Label(flow_box, text="0.70", style="Hint.TLabel")
+        self.flow_noise_value_label.pack(anchor="e")
+
+        ttk.Checkbutton(
+            flow_box,
+            text="Сжимать кадр перед анализом (ускоряет работу)",
+            variable=self.flow_resize_enabled_var,
+            command=self.on_flow_resize_toggle,
+        ).pack(anchor="w", pady=(6, 2))
+
+        ttk.Label(flow_box, text="Масштаб кадра", style="Card.TLabel").pack(anchor="w")
+        self.flow_resize_scale = ttk.Scale(
+            flow_box,
+            from_=0.20,
+            to=1.0,
+            variable=self.flow_resize_scale_var,
+            command=self.on_flow_resize_scale_change,
+        )
+        self.flow_resize_scale.pack(fill="x", pady=(2, 6))
+        self.flow_resize_value_label = ttk.Label(flow_box, text="0.33", style="Hint.TLabel")
+        self.flow_resize_value_label.pack(anchor="e")
+
+        zone_box = ttk.LabelFrame(root, text="Зелёная зона и ползунок", padding=12, style="Card.TLabelframe")
+        zone_box.pack(fill="x", pady=(0, 10))
+
+        ttk.Label(zone_box, text="Мин. площадь зелёной зоны", style="Card.TLabel").pack(anchor="w")
+        ttk.Scale(zone_box, from_=50, to=800, variable=self.green_min_area_var, command=self.on_green_min_area_change).pack(fill="x")
+
+        ttk.Label(zone_box, text="Slider S max", style="Card.TLabel").pack(anchor="w", pady=(6, 0))
+        ttk.Scale(zone_box, from_=0, to=120, variable=self.slider_s_max_var, command=self.on_slider_s_max_change).pack(fill="x")
+
+        ttk.Label(zone_box, text="Slider V min", style="Card.TLabel").pack(anchor="w", pady=(6, 0))
+        ttk.Scale(zone_box, from_=120, to=255, variable=self.slider_v_min_var, command=self.on_slider_v_min_change).pack(fill="x")
+
+        ttk.Label(zone_box, text="Мин. площадь ползунка", style="Card.TLabel").pack(anchor="w", pady=(6, 0))
+        ttk.Scale(zone_box, from_=5, to=200, variable=self.slider_min_area_var, command=self.on_slider_min_area_change).pack(fill="x")
+
+        ttk.Label(zone_box, text="Порог срабатывания SPACE (px)", style="Card.TLabel").pack(anchor="w", pady=(6, 0))
+        ttk.Scale(zone_box, from_=0, to=40, variable=self.space_trigger_threshold_var, command=self.on_space_trigger_threshold_change).pack(fill="x")
+
         ttk.Button(root, text="Reload config.json", command=self.on_reload).pack(fill="x", pady=(0, 10))
 
     def apply_config_to_bot(self, cfg: dict):
         sound = cfg.get("sound", {})
         if "file" in sound:
-            main.sound_file_path = sound["file"]
+            main.sound_file_path = asset_path(sound["file"])
         if "enabled" in sound:
             main.SOUND_ENABLED = bool(sound["enabled"])
 
@@ -250,6 +329,70 @@ class Launcher(tk.Tk):
             self.ctl.set_release_mode()
         else:
             self.ctl.set_take_mode()
+
+        flow_noise = float(behavior.get("flow_noise_threshold", 0.7))
+        flow_resize_enabled = bool(behavior.get("flow_resize_enabled", True))
+        flow_resize_scale = float(behavior.get("flow_resize_scale", 0.33))
+
+        self.flow_noise_var.set(flow_noise)
+        self.flow_resize_enabled_var.set(flow_resize_enabled)
+        self.flow_resize_scale_var.set(flow_resize_scale)
+
+        self.ctl.set_flow_noise_threshold(flow_noise)
+        self.ctl.set_flow_resize_enabled(flow_resize_enabled)
+        self.ctl.set_flow_resize_scale(flow_resize_scale)
+
+        green_min_area = float(behavior.get("green_min_area", 264))
+        slider_s_max = float(behavior.get("slider_s_max", 30))
+        slider_v_min = float(behavior.get("slider_v_min", 216))
+        slider_min_area = float(behavior.get("slider_min_area", 30))
+        space_trigger_threshold_px = float(behavior.get("space_trigger_threshold_px", 8))
+
+        self.green_min_area_var.set(green_min_area)
+        self.slider_s_max_var.set(slider_s_max)
+        self.slider_v_min_var.set(slider_v_min)
+        self.slider_min_area_var.set(slider_min_area)
+        self.space_trigger_threshold_var.set(space_trigger_threshold_px)
+
+        self.ctl.set_green_min_area(green_min_area)
+        self.ctl.set_slider_s_max(slider_s_max)
+        self.ctl.set_slider_v_min(slider_v_min)
+        self.ctl.set_slider_min_area(slider_min_area)
+        self.ctl.set_space_trigger_threshold_px(space_trigger_threshold_px)
+
+        self._refresh_flow_labels()
+
+    def _refresh_flow_labels(self):
+        self.flow_noise_value_label.configure(text=f"{self.flow_noise_var.get():.2f}")
+        self.flow_resize_value_label.configure(text=f"{self.flow_resize_scale_var.get():.2f}")
+
+    def on_flow_noise_change(self, _value=None):
+        value = float(self.flow_noise_var.get())
+        self.ctl.set_flow_noise_threshold(value)
+        self._refresh_flow_labels()
+
+    def on_flow_resize_toggle(self):
+        self.ctl.set_flow_resize_enabled(self.flow_resize_enabled_var.get())
+
+    def on_flow_resize_scale_change(self, _value=None):
+        value = float(self.flow_resize_scale_var.get())
+        self.ctl.set_flow_resize_scale(value)
+        self._refresh_flow_labels()
+
+    def on_green_min_area_change(self, _value=None):
+        self.ctl.set_green_min_area(self.green_min_area_var.get())
+
+    def on_slider_s_max_change(self, _value=None):
+        self.ctl.set_slider_s_max(self.slider_s_max_var.get())
+
+    def on_slider_v_min_change(self, _value=None):
+        self.ctl.set_slider_v_min(self.slider_v_min_var.get())
+
+    def on_slider_min_area_change(self, _value=None):
+        self.ctl.set_slider_min_area(self.slider_min_area_var.get())
+
+    def on_space_trigger_threshold_change(self, _value=None):
+        self.ctl.set_space_trigger_threshold_px(self.space_trigger_threshold_var.get())
 
     def setup_hotkeys(self, cfg: dict):
         self._clear_hotkeys()
@@ -304,9 +447,12 @@ class Launcher(tk.Tk):
 
     def poll_license(self):
         status = self.license_manager.get_status()
-        if status.is_active and status.expires_at:
-            left = timedelta(seconds=status.seconds_left)
-            self.license_info_var.set(f"Лицензия активна, осталось: {left}")
+        if status.is_active:
+            if status.expires_at:
+                left = timedelta(seconds=status.seconds_left)
+                self.license_info_var.set(f"Лицензия активна, осталось: {left}")
+            else:
+                self.license_info_var.set("Лицензия активна: полный доступ")
         else:
             self.license_info_var.set("Лицензия неактивна")
 
@@ -326,7 +472,7 @@ class Launcher(tk.Tk):
 
 
 if __name__ == "__main__":
-    manager = LicenseManager()
+    manager = LicenseManager(str((get_runtime_base_dir() / "licenses.db").resolve()))
     status = manager.get_status()
 
     if not status.is_active:

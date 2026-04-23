@@ -11,6 +11,14 @@
   },
   "behavior": {
     "reward_action": "take",
-    "post_cycle_reset": false
+    "post_cycle_reset": false,
+    "flow_noise_threshold": 0.7,
+    "flow_resize_enabled": true,
+    "flow_resize_scale": 0.33,
+    "green_min_area": 264,
+    "slider_s_max": 30,
+    "slider_v_min": 216,
+    "slider_min_area": 30,
+    "space_trigger_threshold_px": 8
   }
 }
