@@ -23,34 +23,40 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pyinstaller
+          pip install pyinstaller pyinstaller-hooks-contrib
 
-      - name: Build EXE
+      - name: Build EXE (modules/plugins inside)
+        run: python build_exe.py
+
+      - name: Prepare distributable folder (assets external)
         shell: pwsh
         run: |
-          pyinstaller --noconfirm --clean --windowed --onefile --name FishingBot `
-            --add-data "ASK.mp3;." `
-            --add-data "AD.png;." `
-            --add-data "EZEFISH.jpg;." `
-            --add-data "q11.png;." `
-            --add-data "q12.png;." `
-            --add-data "1.png;." `
-            --add-data "otpustit.png;." `
-            --add-data "stop.png;." `
-            --add-data "knopkasebe.jpg;." `
-            --add-data "config.json;." `
-            --add-data "licenses.db;." `
-            launcher.py
+          New-Item -ItemType Directory -Path package/assets -Force | Out-Null
+          Copy-Item dist/FishingBot.exe package/FishingBot.exe -Force
+
+          $assetExt = @('*.png','*.jpg','*.jpeg','*.mp3')
+          foreach ($pattern in $assetExt) {
+            Get-ChildItem -Path . -File -Filter $pattern | ForEach-Object {
+              Copy-Item $_.FullName package/assets/ -Force
+            }
+          }
+
+          if (Test-Path config.json) { Copy-Item config.json package/config.json -Force }
+          if (Test-Path licenses.db) { Copy-Item licenses.db package/licenses.db -Force }
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: FishingBot-windows-exe
-          path: dist/FishingBot.exe
+          name: FishingBot-windows-package
+          path: package/
           if-no-files-found: error
 
       - name: Upload release asset
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/FishingBot.exe
+          files: |
+            package/FishingBot.exe
+            package/config.json
+            package/licenses.db
+            package/assets/*
